@@ -1,0 +1,19 @@
+2025-03-05 19:06:39,272 - book_processor - INFO - Scanning book directories in books/
+2025-03-05 19:06:39,272 - book_processor - INFO - Found 1 books with text files
+2025-03-05 19:06:39,272 - book_processor - INFO - Processing batch of 1 books
+2025-03-05 19:06:39,288 - book_processor - INFO - Merging book: bg_decoded
+2025-03-05 19:06:39,288 - book_processor - INFO - Successfully merged book: bg_decoded
+2025-03-05 19:06:39,319 - book_processor - INFO - Split bg_decoded into 5 chunks for processing
+2025-03-05 19:06:39,319 - book_processor - INFO - Processing chunk 1/5 of bg_decoded
+2025-03-05 19:06:57,244 - book_processor - INFO - Processing chunk 2/5 of bg_decoded
+2025-03-05 19:07:12,580 - book_processor - INFO - Processing chunk 3/5 of bg_decoded
+2025-03-05 19:07:27,067 - book_processor - INFO - Processing chunk 4/5 of bg_decoded
+2025-03-05 19:07:38,593 - book_processor - INFO - Processing chunk 5/5 of bg_decoded
+2025-03-05 19:07:46,525 - book_processor - INFO - Successfully processed book: bg_decoded
+2025-03-05 19:07:46,525 - book_processor - INFO - Successfully processed: bg_decoded
+2025-03-05 19:07:46,525 - book_processor - INFO - Batch completed: 1 processed, 0 errors
+2025-03-05 19:07:46,525 - book_processor - INFO - No books found for processing
+2025-03-05 19:07:46,525 - book_processor - INFO - No more books to process
+2025-03-05 19:07:46,525 - book_processor - INFO - Creating dataset from 1 books
+2025-03-05 19:07:46,540 - book_processor - INFO - Created dataset with 20 examples from 1 books
+2025-03-05 19:07:46,540 - book_processor - INFO - Dataset created with 20 examples from 1 books
