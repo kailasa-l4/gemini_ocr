@@ -1,0 +1,11 @@
+# Add to .gitignore file
+*.log
+__pycache__/
+*.pyc
+.env
+book_processing.db/
+chunk_viewer.log/
+combined_dataset.jsonl/
+processing.log/
+output/
+books/
