@@ -29,7 +29,7 @@ class BookProcessor:
     A scalable pipeline for processing hundreds of books with multiple files per book.
     """
     
-    def __init__(self, api_key: str, model_name: str = "gemini-1.5-flash-001", 
+    def __init__(self, api_key: str, model_name: str = "gemini-2.0-flash-001", 
                  db_path: str = "book_processing.db"):
         """Initialize the book processor."""
         self.api_key = api_key
@@ -82,21 +82,6 @@ class BookProcessor:
             operation TEXT,
             tokens_used INTEGER,
             success BOOLEAN
-        )
-        ''')
-        
-        # Chunk processing tracking
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS chunk_processing (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            book_id TEXT,
-            chunk_number INTEGER,
-            original_text TEXT,
-            processed_text TEXT,
-            status TEXT DEFAULT 'pending',
-            started_at TEXT,
-            completed_at TEXT,
-            FOREIGN KEY (book_id) REFERENCES books(book_id)
         )
         ''')
         
@@ -195,9 +180,22 @@ class BookProcessor:
         """Generate a unique ID from text."""
         return hashlib.md5(text.encode()).hexdigest()
     
+    def _extract_part_number(self, file_path: str) -> int:
+        """
+        Extract the part number from a file path.
+        Examples:
+        - "Guaranteed Solutions - For Lust Fear Worry..._English_part_1" -> 1
+        - "Guaranteed Solutions - For Lust Fear Worry..._English_part_10" -> 10
+        """
+        # Search for part_X or part_XX pattern at the end of the filename
+        match = re.search(r'part_(\d+)(?:\.\w+)?$', file_path)
+        if match:
+            return int(match.group(1))
+        return 0  # Default to 0 if no part number found
+    
     def merge_book_files(self, book_id: str, output_dir: str) -> Optional[str]:
         """
-        Merge all files for a book into a single text file.
+        Merge all files for a book into a single text file in chronological order.
         
         Args:
             book_id: ID of the book to merge
@@ -225,8 +223,8 @@ class BookProcessor:
         UPDATE books SET status = ?, started_at = ? WHERE book_id = ?
         ''', ("merging", datetime.now().isoformat(), book_id))
         
-        # Get all files for this book
-        cursor.execute("SELECT file_id, file_path FROM files WHERE book_id = ? ORDER BY file_path", (book_id,))
+        # Get all files for this book (without ordering in SQL)
+        cursor.execute("SELECT file_id, file_path FROM files WHERE book_id = ?", (book_id,))
         files = cursor.fetchall()
         
         if not files:
@@ -237,6 +235,15 @@ class BookProcessor:
             conn.commit()
             conn.close()
             return None
+        
+        # Sort files by part number
+        files.sort(key=lambda x: self._extract_part_number(x[1]))
+        
+        # Log the sorted files for verification
+        logger.info(f"Merging {len(files)} files for {book_name} in chronological order:")
+        for file_id, file_path in files:
+            part_num = self._extract_part_number(file_path)
+            logger.info(f"  Part {part_num}: {os.path.basename(file_path)}")
         
         # Create output directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
@@ -260,8 +267,9 @@ class BookProcessor:
                                 content = f.read()
                         
                         # Add file separator and content
+                        part_num = self._extract_part_number(file_path)
                         file_name = os.path.basename(file_path)
-                        merged_file.write(f"\n\n## {file_name}\n\n")
+                        merged_file.write(f"\n\n## Part {part_num}: {file_name}\n\n")
                         merged_file.write(content)
                         
                         # Update file status
@@ -351,7 +359,7 @@ class BookProcessor:
             for i, chunk in enumerate(chunks):
                 logger.info(f"Processing chunk {i+1}/{len(chunks)} of {book_name}")
                 try:
-                    processed_chunk = self._process_chunk_with_gemini(chunk, book_id, i+1)
+                    processed_chunk = self._process_chunk_with_gemini(chunk)
                     processed_chunks.append(processed_chunk)
                     # Record API usage
                     self._record_api_usage(book_id, "chunk_processing", 0, True)
@@ -479,22 +487,11 @@ class BookProcessor:
         
         return chunks
     
-    def _process_chunk_with_gemini(self, chunk: str, book_id: str, chunk_number: int) -> str:
+    def _process_chunk_with_gemini(self, chunk: str) -> str:
         """Process a text chunk with Gemini API."""
-        # Record chunk start
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('''
-        INSERT INTO chunk_processing
-        (book_id, chunk_number, original_text, status, started_at)
-        VALUES (?, ?, ?, ?, ?)
-        ''', (book_id, chunk_number, chunk, "processing", datetime.now().isoformat()))
-        conn.commit()
-        conn.close()
-        
         prompt = f"""
         You're cleaning OCRed text from a spiritual book for LLM training. Clean and structure this text while preserving its meaning:
-
+        
         1. Remove image references, page numbers, and formatting artifacts
         2. Fix and properly format Sanskrit verses and translations
         3. Format chapter headings and sections with markdown
@@ -502,7 +499,11 @@ class BookProcessor:
         5. Clean up any table structures with proper markdown
         6. Any reference of {"Paramahamsa Nithyananda", "Nithyananda"} make it as "THE SUPREME PONTIFF OF HINDUISM BHAGAWAN SRI NITHYANANDA PARAMASHIVAM"
         7. Replace "India" with "Bharat" and "Indian" with Hindu
-        8. Return ONLY the cleaned text, no explanations
+        8. Remove ALL contact information (phone numbers, emails, websites, social media handles)
+        9. Remove ALL book metadata (ISBN numbers, copyright notices, publication dates, pricing, publisher information)
+        10. Remove the entire index section of the book
+        11. Remove specific numerical statistics about humanitarian activities (e.g., "10,000 meals served", "1,000 people healed") - keep only general descriptions without numbers
+        12. Return ONLY the cleaned text, no explanations
 
         OCRed Text:
         ```
@@ -512,34 +513,9 @@ class BookProcessor:
         
         try:
             response = self.model.generate_content(prompt)
-            processed_text = response.text.strip()
-            
-            # Record chunk completion
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute('''
-            UPDATE chunk_processing
-            SET processed_text = ?, status = ?, completed_at = ?
-            WHERE book_id = ? AND chunk_number = ?
-            ''', (processed_text, "completed", datetime.now().isoformat(), book_id, chunk_number))
-            conn.commit()
-            conn.close()
-            
-            return processed_text
+            return response.text.strip()
         except Exception as e:
             logger.error(f"Error with Gemini API: {e}")
-            
-            # Record chunk error
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute('''
-            UPDATE chunk_processing
-            SET status = ?, completed_at = ?
-            WHERE book_id = ? AND chunk_number = ?
-            ''', ("error", datetime.now().isoformat(), book_id, chunk_number))
-            conn.commit()
-            conn.close()
-            
             raise
     
     def _extract_metadata(self, text: str) -> Dict[str, Any]:
