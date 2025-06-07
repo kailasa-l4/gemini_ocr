@@ -95,6 +95,7 @@ dependencies = [
     { name = "google-genai" },
     { name = "pillow" },
     { name = "pymupdf" },
+    { name = "python-dotenv" },
     { name = "tqdm" },
 ]
 
@@ -103,6 +104,7 @@ requires-dist = [
     { name = "google-genai", specifier = ">=1.19.0" },
     { name = "pillow", specifier = ">=11.2.1" },
     { name = "pymupdf", specifier = ">=1.26.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
 ]
 
@@ -316,6 +318,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e1/80/9cca07bf9c5dfa273781d3559266dcce2001ed111f068b80cad950584c01/pymupdf-1.26.0-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:b5d4751696ba888ab1a91c6a0208c5d31724ee0bebe406f7a83067a08214f88b", size = 25300434, upload-time = "2025-05-22T16:09:13.839Z" },
     { url = "https://files.pythonhosted.org/packages/59/c7/2e3e3d9419415e3c479fd9cb23067d33cc17db89e64c9167551a4acb66f2/pymupdf-1.26.0-cp39-abi3-win32.whl", hash = "sha256:eeb04a439355e2077f7675b8ad9377263d81990fc507748f2254a87d771d682b", size = 16925774, upload-time = "2025-05-22T16:09:34.814Z" },
     { url = "https://files.pythonhosted.org/packages/e9/d7/a6ce6629b66921529543c899830104f40dde45d98534d945970ea61ca8c9/pymupdf-1.26.0-cp39-abi3-win_amd64.whl", hash = "sha256:e39cc74ff030d773c4e76b9e5c5919cc4683895b73bd63bfd7a349a53ab5e8d7", size = 18525321, upload-time = "2025-05-22T16:10:01.426Z" },
+]
+
+[[package]]
+name = "python-dotenv"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/88/2c/7bb1416c5620485aa793f2de31d3df393d3686aa8a8506d11e10e13c5baf/python_dotenv-1.1.0.tar.gz", hash = "sha256:41f90bc6f5f177fb41f53e87666db362025010eb28f60a01c9143bfa33a2b2d5", size = 39920, upload-time = "2025-03-25T10:14:56.835Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1e/18/98a99ad95133c6a6e2005fe89faedf294a748bd5dc803008059409ac9b1e/python_dotenv-1.1.0-py3-none-any.whl", hash = "sha256:d7c01d9e2293916c18baf562d95698754b0dbbb5e74d457c45d4f6561fb9d55d", size = 20256, upload-time = "2025-03-25T10:14:55.034Z" },
 ]
 
 [[package]]

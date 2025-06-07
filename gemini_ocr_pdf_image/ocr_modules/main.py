@@ -1,35 +1,13 @@
 """
-Enhanced OCR Script with Gemini 2.5 Flash and Combined Pre-Assessment
-
-Features:
-- Supports PDF files, single image files, and directories of image files
-- Optimized combined pre-assessment: Visual legibility + Semantic quality prediction in one API call
-- Structured outputs using JSON schemas
-- Progress tracking with CSV files
-- Resume functionality for interrupted processing
-- Markdown output for all extracted text
-- Recursive directory scanning for images
-- Configurable thresholds for both visual and semantic validation
-- Reduced API consumption (2 calls per image instead of 3)
-
-Supported image formats: JPG, JPEG, PNG, BMP, TIFF, TIF, WEBP
-
-Usage:
-    # Process a PDF file
-    python ocr_book_processor.py --input-file book.pdf --output-dir ./output --api-key YOUR_KEY
-    
-    # Process a single image file with custom thresholds
-    python ocr_book_processor.py --input-file old_document.png --output-dir ./output --api-key YOUR_KEY \
-        --legibility-threshold 0.6 --semantic-threshold 0.7
-    
-    # Process a directory of images
-    python ocr_book_processor.py --input-dir ./images --output-dir ./output --api-key YOUR_KEY
+Main entry point for the enhanced OCR processor.
 """
 
 import os
 import argparse
 from dotenv import load_dotenv
-from ocr_modules import GeminiAdvancedOCR, is_pdf_file, is_image_file
+from .ocr_engine import GeminiOCREngine
+from .processors import PDFProcessor, ImageProcessor, ImageDirectoryProcessor
+from .utils import is_pdf_file, is_image_file
 
 
 def load_env_config():
@@ -138,8 +116,8 @@ def main():
         print(f"Error: Directory not found: {args.input_dir}")
         return
     
-    # Create OCR processor
-    ocr = GeminiAdvancedOCR(
+    # Create OCR engine
+    ocr_engine = GeminiOCREngine(
         args.api_key, 
         thinking_budget=args.thinking_budget,
         enable_thinking_assessment=args.enable_thinking_assessment,
@@ -151,7 +129,8 @@ def main():
         if is_pdf_file(args.input_file):
             # Process as PDF
             print(f"\n{'='*80}\nProcessing PDF: {args.input_file}\n{'='*80}")
-            result_file = ocr.process_pdf(
+            processor = PDFProcessor(ocr_engine)
+            result_file = processor.process_pdf(
                 args.input_file,
                 args.output_dir,
                 args.start_page,
@@ -165,7 +144,8 @@ def main():
         elif is_image_file(args.input_file):
             # Process as single image
             print(f"\n{'='*80}\nProcessing single image: {args.input_file}\n{'='*80}")
-            result_file = ocr.process_single_image(
+            processor = ImageProcessor(ocr_engine)
+            result_file = processor.process_single_image(
                 args.input_file,
                 args.output_dir,
                 args.legibility_threshold,
@@ -181,7 +161,8 @@ def main():
         
     elif args.input_dir:
         print(f"\n{'='*80}\nProcessing image directory: {args.input_dir}\n{'='*80}")
-        result_file = ocr.process_images(
+        processor = ImageDirectoryProcessor(ocr_engine)
+        result_file = processor.process_images(
             args.input_dir,
             args.output_dir,
             args.legibility_threshold,
