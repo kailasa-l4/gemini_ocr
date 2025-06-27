@@ -4,7 +4,10 @@ Core OCR engine with Gemini API integration.
 
 import io
 import json
+import logging
+import os
 import time
+from datetime import datetime
 from PIL import Image
 from google import genai
 from google.genai import types
@@ -23,6 +26,9 @@ class GeminiOCREngine:
         self.enable_thinking_assessment = enable_thinking_assessment
         self.enable_thinking_ocr = enable_thinking_ocr
         
+        # Setup logging first
+        self.setup_logging()
+        
         # Initialize the Google Gen AI client
         self.client = genai.Client(api_key=api_key)
         
@@ -36,6 +42,39 @@ class GeminiOCREngine:
         
         print(f"Initialized OCR engine with thinking budget: {thinking_budget}")
         print(f"Thinking enabled - Assessment: {enable_thinking_assessment}, OCR: {enable_thinking_ocr}")
+        self.logger.info(f"OCR engine initialized with thinking budget: {thinking_budget}")
+        self.logger.info(f"Thinking enabled - Assessment: {enable_thinking_assessment}, OCR: {enable_thinking_ocr}")
+    
+    def setup_logging(self):
+        """Setup logging configuration with file output."""
+        # Create logs directory if it doesn't exist
+        logs_dir = "logs"
+        if not os.path.exists(logs_dir):
+            os.makedirs(logs_dir)
+        
+        # Setup logger
+        self.logger = logging.getLogger('GeminiOCREngine')
+        self.logger.setLevel(logging.DEBUG)
+        
+        # Create file handler with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = os.path.join(logs_dir, f"ocr_debug_{timestamp}.log")
+        
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(logging.DEBUG)
+        
+        # Create formatter
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        file_handler.setFormatter(formatter)
+        
+        # Add handler to logger
+        if not self.logger.handlers:
+            self.logger.addHandler(file_handler)
+        
+        self.logger.info(f"Logging initialized - log file: {log_file}")
+        print(f"Debug logging enabled - log file: {log_file}")
     
     def combined_pre_assessment(self, image: Image.Image, page_num: int, 
                               legibility_threshold: float = 0.5, 
@@ -255,93 +294,174 @@ class GeminiOCREngine:
         """Extract text from a legible image using OCR."""
         start_time = time.time()
         
-        prompt = f"""
-        Extract ALL text from this scanned page image (Page {page_num}). This document may contain text in various languages including English, Sanskrit, Tamil, Hindi, or other Indian languages.
-        
-        Guidelines:
-        1. Capture ALL visible text including headings, paragraphs, footnotes, captions
-        2. Preserve the original text structure and formatting as much as possible
-        3. Maintain paragraph breaks and section organization
-        4. For Sanskrit text: Preserve all diacritical marks (ā, ī, ū, ṛ, ṝ, ḷ, ḹ, ṃ, ḥ, etc.)
-        5. For Tamil text: Preserve all Tamil characters and diacritics accurately
-        6. For other Indian language scripts: Maintain authentic character representation
-        7. Include any visible verse numbers, section markers, or page headers
-        8. Format any tables or structured content appropriately
-        9. Ignore watermarks, page numbers, and purely decorative elements
-        10. Maintain the logical reading order
-        11. If text is unclear or damaged, do your best to reconstruct based on context
-        
-        IMPORTANT: Always provide a confidence score between 0.0 and 1.0 for extraction accuracy.
-        Always detect and specify the primary language of the text.
-        If no text is visible or extractable, set extracted_text to an empty string but still provide confidence and language fields.
-        """
-        
-        # Configure for OCR extraction
-        config = types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=APISchemas.get_ocr_schema(),
-            max_output_tokens=4000,
-            temperature=0.1
-        )
-        
-        # Add thinking configuration for OCR if enabled
-        if self.enable_thinking_ocr:
-            try:
-                config.thinking_config = types.ThinkingConfig(
-                    thinking_budget=self.thinking_budget
-                )
-                print(f"Applied thinking config for OCR with budget: {self.thinking_budget}")
-            except Exception as e:
-                print(f"Could not apply thinking config for OCR: {str(e)}")
-        else:
-            print("Thinking disabled for OCR phase")
-        
-        # Convert PIL image to bytes for the API
-        img_bytes = io.BytesIO()
-        image.save(img_bytes, format='PNG')
-        img_bytes.seek(0)
-        
         try:
-            response = self.client.models.generate_content(
-                model='gemini-2.5-flash-preview-05-20',
-                contents=[
-                    prompt,
-                    types.Part.from_bytes(
-                        data=img_bytes.getvalue(), 
-                        mime_type='image/png'
-                    )
-                ],
-                config=config
+            prompt = f"""
+            Extract ALL text from this scanned page image (Page {page_num}). This document may contain text in various languages including English, Sanskrit, Tamil, Hindi, or other Indian languages.
+            
+            Guidelines:
+            1. Capture ALL visible text including headings, paragraphs, footnotes, captions
+            2. Preserve the original text structure and formatting as much as possible
+            3. Maintain paragraph breaks and section organization
+            4. For Sanskrit text: Preserve all diacritical marks (ā, ī, ū, ṛ, ṝ, ḷ, ḹ, ṃ, ḥ, etc.)
+            5. For Tamil text: Preserve all Tamil characters and diacritics accurately
+            6. For other Indian language scripts: Maintain authentic character representation
+            7. Include any visible verse numbers, section markers, or page headers
+            8. Format any tables or structured content appropriately
+            9. Ignore watermarks, page numbers, and purely decorative elements
+            10. Maintain the logical reading order
+            11. If text is unclear or damaged, do your best to reconstruct based on context
+            
+            IMPORTANT: Always provide a confidence score between 0.0 and 1.0 for extraction accuracy.
+            Always detect and specify the primary language of the text.
+            If no text is visible or extractable, set extracted_text to an empty string but still provide confidence and language fields.
+            """
+            
+            # Configure for OCR extraction
+            config = types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=APISchemas.get_ocr_schema(),
+                max_output_tokens=4000,
+                temperature=0.1
             )
             
-            # Check if response is valid
+            # Add thinking configuration for OCR if enabled
+            if self.enable_thinking_ocr:
+                try:
+                    config.thinking_config = types.ThinkingConfig(
+                        thinking_budget=self.thinking_budget
+                    )
+                    print(f"Applied thinking config for OCR with budget: {self.thinking_budget}")
+                except Exception as e:
+                    print(f"Could not apply thinking config for OCR: {str(e)}")
+            else:
+                print("Thinking disabled for OCR phase")
+            
+            # Convert PIL image to bytes for the API
+            img_bytes = io.BytesIO()
+            image.save(img_bytes, format='PNG')
+            img_bytes.seek(0)
+            
+            # Add retry logic for API calls
+            max_retries = 3
+            retry_delay = 2
+            
+            for attempt in range(max_retries):
+                try:
+                    self.logger.debug(f"OCR API call attempt {attempt + 1}/{max_retries} for page {page_num}")
+                    
+                    response = self.client.models.generate_content(
+                        model='gemini-2.5-flash-preview-05-20',
+                        contents=[
+                            prompt,
+                            types.Part.from_bytes(
+                                data=img_bytes.getvalue(), 
+                                mime_type='image/png'
+                            )
+                        ],
+                        config=config
+                    )
+                    
+                    # If we get here, the API call succeeded
+                    self.logger.debug(f"OCR API call succeeded on attempt {attempt + 1} for page {page_num}")
+                    break
+                    
+                except Exception as api_e:
+                    self.logger.warning(f"OCR API call attempt {attempt + 1} failed for page {page_num}: {str(api_e)}")
+                    
+                    if attempt == max_retries - 1:
+                        # Last attempt failed, re-raise the exception
+                        self.logger.error(f"All {max_retries} OCR API attempts failed for page {page_num}")
+                        raise api_e
+                    else:
+                        # Wait before retrying
+                        self.logger.info(f"Retrying OCR API call in {retry_delay} seconds...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+        
+            # Enhanced response validation with detailed logging
+            self.logger.debug(f"OCR API response received for page {page_num}")
+            self.logger.debug(f"Response type: {type(response)}")
+            self.logger.debug(f"Response attributes: {dir(response) if response else 'None'}")
+            
             if response is None:
                 error_msg = f"API returned None response for page {page_num}"
                 print(f"Error: {error_msg}")
+                self.logger.error(error_msg)
                 raise Exception(error_msg)
+            
+            # Log response structure for debugging
+            self.logger.debug(f"Response has 'text' attribute: {hasattr(response, 'text')}")
+            if hasattr(response, 'text'):
+                self.logger.debug(f"Response.text is None: {response.text is None}")
+                if response.text:
+                    self.logger.debug(f"Response.text length: {len(response.text)}")
+                    self.logger.debug(f"Response.text preview: {response.text[:200]}...")
+            
+            self.logger.debug(f"Response has 'candidates': {hasattr(response, 'candidates')}")
+            if hasattr(response, 'candidates'):
+                self.logger.debug(f"Number of candidates: {len(response.candidates) if response.candidates else 0}")
             
             if not hasattr(response, 'text') or response.text is None:
-                error_msg = f"API response has no text content for page {page_num}"
-                print(f"Error: {error_msg}")
-                raise Exception(error_msg)
+                # Check if this is a MAX_TOKENS issue and try alternative access
+                max_tokens_issue = False
+                if hasattr(response, 'candidates') and response.candidates:
+                    candidate = response.candidates[0]
+                    if hasattr(candidate, 'finish_reason') and str(candidate.finish_reason) == 'FinishReason.MAX_TOKENS':
+                        max_tokens_issue = True
+                        self.logger.warning(f"MAX_TOKENS detected for page {page_num}, retrying with increased token limit")
+                        print(f"Warning: MAX_TOKENS detected for page {page_num}, retrying with increased token limit")
+                
+                if max_tokens_issue:
+                    # Retry with increased token limit
+                    self.logger.info(f"MAX_TOKENS detected for page {page_num}, retrying with increased token limit")
+                    try:
+                        retry_result = self._retry_with_increased_tokens(image, page_num, prompt, config)
+                        return retry_result
+                    except Exception as retry_e:
+                        self.logger.error(f"Retry with increased tokens also failed for page {page_num}: {str(retry_e)}")
+                        # Continue to regular error handling
+                else:
+                    error_msg = f"API response has no text content for page {page_num}"
+                    print(f"Error: {error_msg}")
+                    self.logger.error(error_msg)
+                    self.logger.error(f"Response object details: {vars(response) if hasattr(response, '__dict__') else 'No __dict__'}")
+                    raise Exception(error_msg)
             
-            # Extract text content from response
+            # Extract text content from response with detailed logging
             text_content = None
+            
+            self.logger.debug(f"Attempting to extract text content for page {page_num}")
+            
             if hasattr(response, 'text') and response.text:
                 text_content = response.text
+                self.logger.debug(f"Text extracted via response.text for page {page_num}")
             elif hasattr(response, 'candidates') and response.candidates:
-                # Try alternative access path
-                candidate = response.candidates[0]
-                if hasattr(candidate, 'content') and candidate.content.parts:
-                    part = candidate.content.parts[0]
-                    if hasattr(part, 'text'):
-                        text_content = part.text
+                self.logger.debug(f"Trying alternative access path via candidates for page {page_num}")
+                try:
+                    candidate = response.candidates[0]
+                    self.logger.debug(f"Candidate type: {type(candidate)}")
+                    self.logger.debug(f"Candidate has content: {hasattr(candidate, 'content')}")
+                    
+                    if hasattr(candidate, 'content') and candidate.content.parts:
+                        part = candidate.content.parts[0]
+                        self.logger.debug(f"Part type: {type(part)}")
+                        self.logger.debug(f"Part has text: {hasattr(part, 'text')}")
+                        
+                        if hasattr(part, 'text'):
+                            text_content = part.text
+                            self.logger.debug(f"Text extracted via candidates path for page {page_num}")
+                except Exception as alt_e:
+                    self.logger.error(f"Error in alternative text extraction for page {page_num}: {str(alt_e)}")
             
             # Use the text content we found
             if not text_content:
                 error_msg = f"No text content available for JSON parsing for page {page_num}"
                 print(f"Error: {error_msg}")
+                self.logger.error(error_msg)
+                self.logger.error(f"Failed to extract text content despite response being non-None")
                 raise Exception(error_msg)
+            
+            self.logger.debug(f"Successfully extracted {len(text_content)} characters for page {page_num}")
             
             try:
                 result_data = json.loads(text_content)
@@ -378,10 +498,25 @@ class GeminiOCREngine:
             print(error_msg)
             print(f"Exception type: {type(e)}")
             print(f"Exception details: {repr(e)}")
+            print(f"Exception args: {e.args}")
             
-            # Try to get more specific error information
-            if hasattr(e, 'args') and e.args:
-                print(f"Exception args: {e.args}")
+            # Enhanced error logging
+            self.logger.error(f"OCR extraction failed for page {page_num}")
+            self.logger.error(f"Exception type: {type(e)}")
+            self.logger.error(f"Exception message: {str(e)}")
+            self.logger.error(f"Exception details: {repr(e)}")
+            self.logger.error(f"Exception args: {e.args}")
+            self.logger.error(f"Processing time before error: {processing_time:.2f}s")
+            
+            # Log additional debugging info if available
+            if 'response' in locals():
+                self.logger.error(f"Response object exists: {response is not None}")
+                if response:
+                    self.logger.error(f"Response type at error: {type(response)}")
+                    try:
+                        self.logger.error(f"Response attributes at error: {dir(response)}")
+                    except Exception as attr_e:
+                        self.logger.error(f"Could not get response attributes: {str(attr_e)}")
             
             return OCRResult(
                 extracted_text=f"[Error extracting text from page {page_num}: {str(e)}]",
@@ -389,6 +524,94 @@ class GeminiOCREngine:
                 language_detected="unknown",
                 processing_time=processing_time
             )
+    
+    def _retry_with_increased_tokens(self, image: Image.Image, page_num: int, original_prompt: str, original_config: types.GenerateContentConfig) -> OCRResult:
+        """Retry OCR extraction with increased token limit when MAX_TOKENS is detected."""
+        start_time = time.time()
+        
+        # Increase token limits progressively
+        token_limits = [8000, 12000, 16000]  # Progressive increases
+        
+        for attempt, max_tokens in enumerate(token_limits, 1):
+            self.logger.info(f"Retry attempt {attempt}/{len(token_limits)} with max_output_tokens={max_tokens} for page {page_num}")
+            
+            # Create new config with increased token limit
+            retry_config = types.GenerateContentConfig(
+                response_mime_type=original_config.response_mime_type,
+                response_schema=original_config.response_schema,
+                max_output_tokens=max_tokens,
+                temperature=original_config.temperature
+            )
+            
+            # Convert PIL image to bytes for the API
+            img_bytes = io.BytesIO()
+            image.save(img_bytes, format='PNG')
+            img_bytes.seek(0)
+            
+            try:
+                response = self.client.models.generate_content(
+                    model='gemini-2.5-flash-preview-05-20',
+                    contents=[
+                        original_prompt,
+                        types.Part.from_bytes(
+                            data=img_bytes.getvalue(), 
+                            mime_type='image/png'
+                        )
+                    ],
+                    config=retry_config
+                )
+                
+                self.logger.debug(f"Retry attempt {attempt} response received for page {page_num}")
+                
+                # Check if we got valid text this time
+                if response and hasattr(response, 'text') and response.text:
+                    try:
+                        result_data = json.loads(response.text)
+                        processing_time = time.time() - start_time
+                        
+                        extracted_text = result_data.get('extracted_text', '')
+                        confidence = result_data.get('confidence', 0.0)
+                        language_detected = result_data.get('language_detected', 'unknown')
+                        
+                        self.logger.info(f"Retry succeeded on attempt {attempt} for page {page_num}: {len(extracted_text)} characters")
+                        print(f"Retry OCR (attempt {attempt}) extracted {len(extracted_text)} characters from page {page_num}")
+                        
+                        return OCRResult(
+                            extracted_text=extracted_text,
+                            confidence=confidence,
+                            language_detected=language_detected,
+                            processing_time=processing_time
+                        )
+                    except json.JSONDecodeError as je:
+                        self.logger.warning(f"Retry attempt {attempt} JSON parsing error for page {page_num}: {str(je)}")
+                        if attempt == len(token_limits):  # Last attempt
+                            raise Exception(f"All retry attempts failed with JSON parsing errors: {str(je)}")
+                        continue
+                        
+                else:
+                    # Check if this is still a MAX_TOKENS issue
+                    still_max_tokens = False
+                    if hasattr(response, 'candidates') and response.candidates:
+                        candidate = response.candidates[0]
+                        if hasattr(candidate, 'finish_reason') and str(candidate.finish_reason) == 'FinishReason.MAX_TOKENS':
+                            still_max_tokens = True
+                            self.logger.warning(f"Retry attempt {attempt} still hit MAX_TOKENS for page {page_num}")
+                    
+                    if not still_max_tokens:
+                        # Different error, not token related
+                        raise Exception(f"Retry attempt {attempt}: API response has no text content (not MAX_TOKENS)")
+                    
+                    if attempt == len(token_limits):  # Last attempt
+                        raise Exception(f"All retry attempts with increased tokens failed for page {page_num}")
+                        
+            except Exception as e:
+                self.logger.error(f"Retry attempt {attempt} failed for page {page_num}: {str(e)}")
+                if attempt == len(token_limits):  # Last attempt
+                    raise e
+                continue
+        
+        # Should not reach here
+        raise Exception(f"All retry attempts exhausted for page {page_num}")
     
     def validate_semantic_meaning(self, text: str, language: str, page_num: int) -> SemanticResult:
         """

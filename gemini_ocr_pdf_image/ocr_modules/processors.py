@@ -71,23 +71,23 @@ class PDFProcessor:
         print(f"Legibility threshold: {legibility_threshold}")
         print(f"Semantic threshold: {semantic_threshold}")
         
-        # Process pages
-        all_content = {}
+        # Initialize final output file (only if starting fresh)
+        if not final_output_file.exists():
+            print(f"Initializing output file: {final_output_file}")
+            with open(final_output_file, 'w', encoding='utf-8') as f:
+                f.write(f"# {book_name}\n\n")
+        else:
+            print(f"Resuming with existing output file: {final_output_file}")
         
+        # Process pages with incremental saving
         with tqdm(total=num_pages, desc="Processing pages", unit="page") as pbar:
             for i in pages_to_process:
                 page_num = i + 1  # Convert to 1-based
                 
-                # Check if already processed
+                # Check if already processed  
                 if page_num in progress and progress[page_num].status == 'completed':
                     pbar.update(1)
                     pbar.set_description(f"Skipping completed page {page_num}")
-                    
-                    # Load existing content
-                    page_file = book_output_dir / f"page_{page_num:04d}.md"
-                    if page_file.exists():
-                        with open(page_file, 'r', encoding='utf-8') as f:
-                            all_content[page_num] = f.read()
                     continue
                 
                 try:
@@ -115,20 +115,17 @@ class PDFProcessor:
                         pbar.set_description(f"Extracting text page {page_num}")
                         ocr_result = self.ocr_engine.extract_text(img, page_num)
                         
-                        # Step 3: Clean text (skip semantic validation since pre-assessed)
-                        pbar.set_description(f"Cleaning text page {page_num}")
-                        cleaned_text = self.ocr_engine.clean_and_process_text(ocr_result.extracted_text, book_name)
-                        
-                        page_content = f"# Page {page_num}\n\n{cleaned_text}"
+                        # Use raw OCR text directly (no cleaning)
+                        page_content = ocr_result.extracted_text
                         ocr_confidence = ocr_result.confidence
                         status = 'completed'
                         
-                        # Only save MD file for successful OCR
-                        page_file = book_output_dir / f"page_{page_num:04d}.md"
-                        with open(page_file, 'w', encoding='utf-8') as f:
+                        # Immediately append to final file
+                        pbar.set_description(f"Saving page {page_num}")
+                        with open(final_output_file, 'a', encoding='utf-8') as f:
+                            f.write(f"## Page {page_num}\n\n")
                             f.write(page_content)
-                        
-                        all_content[page_num] = page_content
+                            f.write("\n\n---\n\n")
                         
                     else:
                         # Don't create MD file for failed assessments - details are in CSV
@@ -173,13 +170,12 @@ class PDFProcessor:
                     error_msg = f"Error processing page {page_num}: {str(e)}"
                     print(f"\n{error_msg}")
                     
-                    # Save error page
-                    page_content = f"# Page {page_num} - ERROR\n\n{error_msg}"
-                    page_file = book_output_dir / f"page_{page_num:04d}.md"
-                    with open(page_file, 'w', encoding='utf-8') as f:
-                        f.write(page_content)
-                    
-                    all_content[page_num] = page_content
+                    # Immediately append error to final file
+                    error_content = f"Error processing page {page_num}:\n\n{error_msg}"
+                    with open(final_output_file, 'a', encoding='utf-8') as f:
+                        f.write(f"## Page {page_num} (Error)\n\n")
+                        f.write(error_content)
+                        f.write("\n\n---\n\n")
                     
                     progress[page_num] = PageProgress(
                         page_num=page_num,
@@ -204,16 +200,8 @@ class PDFProcessor:
         
         doc.close()
         
-        # Combine all pages into final markdown file
-        print("\nCombining pages into final markdown file...")
-        final_content = [f"# {book_name}\n\n"]
-        
-        for page_num in sorted(all_content.keys()):
-            final_content.append(all_content[page_num])
-            final_content.append("\n\n---\n\n")  # Page separator
-        
-        with open(final_output_file, 'w', encoding='utf-8') as f:
-            f.write("".join(final_content))
+        # Final file already written incrementally during processing
+        print("\nProcessing complete - content saved incrementally to final file.")
         
         # Print summary
         completed = sum(1 for p in progress.values() if p.status == 'completed')
@@ -240,7 +228,7 @@ class ImageProcessor:
         self.progress_manager = ProgressManager()
     
     def process_single_image(self, image_path: str, output_dir: str, 
-                           legibility_threshold: float = 0.5, semantic_threshold: float = 0.6, skip_text_cleaning: bool = False) -> str:
+                           legibility_threshold: float = 0.5, semantic_threshold: float = 0.6) -> str:
         """
         Process a single image file with enhanced OCR and legibility detection.
         
@@ -299,15 +287,8 @@ class ImageProcessor:
                     print("Extracting text...")
                     ocr_result = self.ocr_engine.extract_text(img, 1)
                     
-                    # Step 3: Clean text (optional - adds extra API calls)
-                    if skip_text_cleaning:
-                        cleaned_text = ocr_result.extracted_text
-                        print("Skipping text cleaning...")
-                    else:
-                        print("Cleaning text...")
-                        cleaned_text = self.ocr_engine.clean_and_process_text(ocr_result.extracted_text, image_name)
-                    
-                    image_content = f"# {image_file.name}\n\n**Source:** `{image_path}`\n\n{cleaned_text}"
+                    # Use raw OCR text directly (no cleaning)
+                    image_content = ocr_result.extracted_text
                     ocr_confidence = ocr_result.confidence
                     status = 'completed'
                     error_message = None
@@ -384,7 +365,7 @@ class ImageProcessor:
             print(f"❌ {error_msg}")
             
             # For pre-assessment or other errors, still create error MD file
-            error_content = f"# {image_file.name} - ERROR\n\n**Source:** `{image_path}`\n\n{error_msg}"
+            error_content = f"Error processing {image_file.name}:\n\n{error_msg}"
             with open(final_output_file, 'w', encoding='utf-8') as f:
                 f.write(error_content)
             
@@ -421,7 +402,7 @@ class ImageDirectoryProcessor:
         self.progress_manager = ProgressManager()
     
     def process_images(self, input_dir: str, output_dir: str, 
-                      legibility_threshold: float = 0.5, semantic_threshold: float = 0.6, skip_text_cleaning: bool = False) -> str:
+                      legibility_threshold: float = 0.5, semantic_threshold: float = 0.6) -> str:
         """
         Process all image files in a directory with enhanced OCR and legibility detection.
         
@@ -503,14 +484,8 @@ class ImageDirectoryProcessor:
                             pbar.set_description(f"Extracting text: {Path(relative_path).name}")
                             ocr_result = self.ocr_engine.extract_text(img, idx)
                             
-                            # Step 3: Clean text (optional - adds extra API calls)
-                            if skip_text_cleaning:
-                                cleaned_text = ocr_result.extracted_text
-                            else:
-                                pbar.set_description(f"Cleaning text: {Path(relative_path).name}")
-                                cleaned_text = self.ocr_engine.clean_and_process_text(ocr_result.extracted_text, dir_name)
-                            
-                            image_content = f"# {relative_path}\n\n**Source:** `{file_path}`\n\n{cleaned_text}"
+                            # Use raw OCR text directly (no cleaning)
+                            image_content = ocr_result.extracted_text
                             ocr_confidence = ocr_result.confidence
                             status = 'completed'
                             
@@ -574,7 +549,7 @@ class ImageDirectoryProcessor:
                     print(f"\n{error_msg}")
                     
                     # Save error content
-                    image_content = f"# {relative_path} - ERROR\n\n**Source:** `{file_path}`\n\n{error_msg}"
+                    image_content = f"Error processing {relative_path}:\n\n{error_msg}"
                     safe_filename = get_safe_filename(relative_path)
                     image_file = output_dir_path / f"{safe_filename}.md"
                     with open(image_file, 'w', encoding='utf-8') as f:

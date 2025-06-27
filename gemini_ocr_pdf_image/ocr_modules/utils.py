@@ -42,6 +42,39 @@ def find_image_files(input_dir: str) -> List[Tuple[str, str]]:
     return image_files
 
 
+def find_pdf_files(input_dir: str) -> List[str]:
+    """
+    Find all PDF files in a directory and subdirectories.
+    
+    Returns:
+        List of PDF file paths
+    """
+    pdf_files = []
+    input_path = Path(input_dir)
+    
+    for file_path in input_path.rglob('*.pdf'):
+        if file_path.is_file():
+            pdf_files.append(str(file_path))
+    
+    # Sort for consistent processing order
+    pdf_files.sort()
+    return pdf_files
+
+
+def find_all_supported_files(input_dir: str) -> Tuple[List[str], List[Tuple[str, str]]]:
+    """
+    Find all supported files (PDFs and images) in a directory.
+    
+    Returns:
+        Tuple of (pdf_files, image_files)
+        - pdf_files: List of PDF file paths
+        - image_files: List of tuples (file_path, relative_path)
+    """
+    pdf_files = find_pdf_files(input_dir)
+    image_files = find_image_files(input_dir)
+    return pdf_files, image_files
+
+
 def get_safe_filename(relative_path: str) -> str:
     """Convert relative path to safe filename for markdown files."""
     # Replace path separators and special characters

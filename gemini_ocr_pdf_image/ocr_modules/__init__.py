@@ -13,7 +13,7 @@ from .models import (
     PageProgress,
     ImageProgress
 )
-from .utils import is_pdf_file, is_image_file, find_image_files, get_safe_filename
+from .utils import is_pdf_file, is_image_file, find_image_files, find_all_supported_files, get_safe_filename
 
 __all__ = [
     'GeminiAdvancedOCR',
@@ -26,5 +26,6 @@ __all__ = [
     'is_pdf_file',
     'is_image_file',
     'find_image_files',
+    'find_all_supported_files',
     'get_safe_filename'
 ]

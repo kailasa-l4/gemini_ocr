@@ -29,7 +29,7 @@ Usage:
 import os
 import argparse
 from dotenv import load_dotenv
-from ocr_modules import GeminiAdvancedOCR, is_pdf_file, is_image_file
+from ocr_modules import GeminiAdvancedOCR, is_pdf_file, is_image_file, find_all_supported_files
 
 
 def load_env_config():
@@ -169,8 +169,7 @@ def main():
                 args.input_file,
                 args.output_dir,
                 args.legibility_threshold,
-                args.semantic_threshold,
-                args.skip_text_cleaning
+                args.semantic_threshold
             )
             print(f"\nImage processing complete! Final file: {result_file}")
             
@@ -180,15 +179,50 @@ def main():
             return
         
     elif args.input_dir:
-        print(f"\n{'='*80}\nProcessing image directory: {args.input_dir}\n{'='*80}")
-        result_file = ocr.process_images(
-            args.input_dir,
-            args.output_dir,
-            args.legibility_threshold,
-            args.semantic_threshold,
-            args.skip_text_cleaning
-        )
-        print(f"\nImage directory processing complete! Final file: {result_file}")
+        print(f"\n{'='*80}\nProcessing directory: {args.input_dir}\n{'='*80}")
+        
+        # Find all supported files (PDFs and images)
+        pdf_files, image_files = find_all_supported_files(args.input_dir)
+        
+        if not pdf_files and not image_files:
+            print("No supported files found!")
+            print("Supported formats: PDF, JPG, JPEG, PNG, BMP, TIFF, TIF, WEBP")
+            return
+        
+        print(f"Found {len(pdf_files)} PDF files and {len(image_files)} image files")
+        
+        result_files = []
+        
+        # Process each PDF individually
+        for pdf_file in pdf_files:
+            print(f"\n{'='*60}\nProcessing PDF: {pdf_file}\n{'='*60}")
+            result_file = ocr.process_pdf(
+                pdf_file,
+                args.output_dir,
+                args.start_page,
+                args.end_page,
+                args.dpi,
+                args.legibility_threshold,
+                args.semantic_threshold
+            )
+            if result_file:
+                result_files.append(result_file)
+                print(f"PDF processing complete! Final file: {result_file}")
+        
+        # Process images as a batch (existing behavior)
+        if image_files:
+            print(f"\n{'='*60}\nProcessing {len(image_files)} images as batch\n{'='*60}")
+            result_file = ocr.process_images(
+                args.input_dir,
+                args.output_dir,
+                args.legibility_threshold,
+                args.semantic_threshold
+            )
+            if result_file:
+                result_files.append(result_file)
+                print(f"Image batch processing complete! Final file: {result_file}")
+        
+        print(f"\nDirectory processing complete! Created {len(result_files)} output files.")
 
 
 if __name__ == "__main__":
