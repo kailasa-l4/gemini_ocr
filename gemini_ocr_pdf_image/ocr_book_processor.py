@@ -59,8 +59,6 @@ def load_env_config():
         config['semantic_threshold'] = float(os.getenv('SEMANTIC_THRESHOLD'))
     if os.getenv('THINKING_BUDGET'):
         config['thinking_budget'] = int(os.getenv('THINKING_BUDGET'))
-    if os.getenv('SKIP_TEXT_CLEANING'):
-        config['skip_text_cleaning'] = os.getenv('SKIP_TEXT_CLEANING').lower() in ('true', '1', 'yes')
     if os.getenv('ENABLE_THINKING_ASSESSMENT'):
         config['enable_thinking_assessment'] = os.getenv('ENABLE_THINKING_ASSESSMENT').lower() in ('true', '1', 'yes')
     if os.getenv('ENABLE_THINKING_OCR'):
@@ -117,9 +115,6 @@ def main():
     parser.add_argument("--thinking-budget", type=int, 
                        default=env_config.get('thinking_budget', 2000), 
                        help="Thinking budget for Gemini")
-    parser.add_argument("--skip-text-cleaning", action="store_true", 
-                       default=env_config.get('skip_text_cleaning', False),
-                       help="Skip text cleaning step to save API calls")
     parser.add_argument("--enable-thinking-assessment", action="store_true", 
                        default=env_config.get('enable_thinking_assessment', True),
                        help="Enable thinking for assessment phase")

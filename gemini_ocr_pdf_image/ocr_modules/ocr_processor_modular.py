@@ -42,9 +42,6 @@ class GeminiAdvancedOCR:
         """Extract text from image."""
         return self.ocr_engine.extract_text(image, page_num)
     
-    def clean_and_process_text(self, text, book_name):
-        """Clean and format extracted text."""
-        return self.ocr_engine.clean_and_process_text(text, book_name)
     
     # Delegate methods to processors
     def process_pdf(self, pdf_path, output_dir, start_page=1, end_page=None, dpi=300, 

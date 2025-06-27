@@ -46,3 +46,5 @@ output/
 !CLAUDE.md
 !readme.MD
 *.csv
+
+images/

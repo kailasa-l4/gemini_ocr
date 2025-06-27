@@ -1,0 +1,3 @@
+2025-06-27 15:51:00,092 - GeminiOCREngine - INFO - Logging initialized - log file: logs/ocr_debug_20250627_155100.log
+2025-06-27 15:51:00,130 - GeminiOCREngine - INFO - OCR engine initialized with thinking budget: 1000
+2025-06-27 15:51:00,130 - GeminiOCREngine - INFO - Thinking enabled - Assessment: False, OCR: False

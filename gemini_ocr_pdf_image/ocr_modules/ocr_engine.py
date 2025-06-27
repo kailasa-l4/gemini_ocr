@@ -296,24 +296,83 @@ class GeminiOCREngine:
         
         try:
             prompt = f"""
-            Extract ALL text from this scanned page image (Page {page_num}). This document may contain text in various languages including English, Sanskrit, Tamil, Hindi, or other Indian languages.
+            Extract ALL text from this scanned page image (Page {page_num}) and format it in proper Markdown syntax. This document may contain text in various languages including English, Sanskrit, Tamil, Hindi, or other Indian languages.
             
-            Guidelines:
+            Text Extraction Guidelines:
             1. Capture ALL visible text including headings, paragraphs, footnotes, captions
-            2. Preserve the original text structure and formatting as much as possible
-            3. Maintain paragraph breaks and section organization
-            4. For Sanskrit text: Preserve all diacritical marks (ā, ī, ū, ṛ, ṝ, ḷ, ḹ, ṃ, ḥ, etc.)
-            5. For Tamil text: Preserve all Tamil characters and diacritics accurately
-            6. For other Indian language scripts: Maintain authentic character representation
-            7. Include any visible verse numbers, section markers, or page headers
-            8. Format any tables or structured content appropriately
-            9. Ignore watermarks, page numbers, and purely decorative elements
-            10. Maintain the logical reading order
-            11. If text is unclear or damaged, do your best to reconstruct based on context
+            2. For Sanskrit text: Preserve all diacritical marks (ā, ī, ū, ṛ, ṝ, ḷ, ḹ, ṃ, ḥ, etc.)
+            3. For Tamil text: Preserve all Tamil characters and diacritics accurately
+            4. For other Indian language scripts: Maintain authentic character representation
+            5. Include any visible verse numbers, section markers, or page headers
+            6. Ignore watermarks, page numbers, and purely decorative elements
+            7. **2-COLUMN LAYOUT READING ORDER**: If the page has a 2-column layout, read LEFT column first (top to bottom), then RIGHT column (top to bottom). Maintain this left-to-right, top-to-bottom reading sequence in your output.
+            8. Maintain the logical reading order based on visual layout
+            9. If text is unclear or damaged, do your best to reconstruct based on context
+            
+            STRICT Markdown Formatting Instructions - Follow These Rules Exactly:
+            
+            **HEADING HIERARCHY RULES:**
+            1. **Major Sections**: Use ## for main chapter/section titles (like "CONTENTS", "CHAPTER I", etc.)
+            2. **Chapter Subsections**: Use ### for subsection titles within chapters
+            3. **NEVER use multiple # headings for parts of the same title** - combine them into one heading
+            
+            **LIST FORMATTING RULES - BE CONSISTENT:**
+            1. **Table of Contents**: ALWAYS use bullet lists with page numbers
+               Format: "* Chapter Title - Page Number"
+            2. **Chapter Content Lists**: ALWAYS use bullet points (-) with consistent emphasis
+               Format: "- *Topic Title* Page Number" 
+            3. **Feature/Topic Lists**: Use bullet points (-) consistently throughout
+            4. **NEVER mix numbered and bullet lists within the same section type**
+            
+            **SPECIFIC FORMATTING PATTERNS:**
+            
+            For CONTENTS sections:
+            ```
+            # CONTENTS
+            
+            ## I SECTION NAME
+            * Topic Name - Page Number
+            * Another Topic - Page Number
+            
+            ## II NEXT SECTION  
+            * Topic Name - Page Number
+            * Another Topic - Page Number
+            ```
+            
+            For chapter topic lists:
+            ```
+            ## CHAPTER NAME
+            - *Topic Title* Page Number
+            - *Another Topic* Page Number
+            - *Third Topic* Page Number
+            ```
+            
+            **EMPHASIS RULES:**
+            - Use *italic* for topic/chapter titles in lists consistently
+            - Use **bold** sparingly for very important emphasis only
+            - Be consistent within each section type
+            
+            **SPACING RULES:**
+            - Single blank line between different list items
+            - Double blank line between major sections
+            - No excessive line breaks
+            
+            **WHAT NOT TO DO - AVOID THESE MISTAKES:**
+            - DON'T use multiple # headings for one title (like "# The Essence" then "# of Living Enlightenment")
+            - DON'T mix numbered lists and bullet points in the same context
+            
+            FINAL FORMATTING CHECK:
+            Before finalizing your output, review it to ensure:
+            1. Consistent heading hierarchy (no multiple # for single titles)
+            2. Consistent list formatting within each section type
+            3. Consistent emphasis patterns
+            4. Proper spacing between sections
+            5. All formatting rules above are followed exactly
             
             IMPORTANT: Always provide a confidence score between 0.0 and 1.0 for extraction accuracy.
             Always detect and specify the primary language of the text.
             If no text is visible or extractable, set extracted_text to an empty string but still provide confidence and language fields.
+            Return the text in strict, consistent markdown format following ALL the guidelines above.
             """
             
             # Configure for OCR extraction
@@ -715,67 +774,3 @@ class GeminiOCREngine:
                 processing_time=processing_time
             )
     
-    def clean_and_process_text(self, text: str, book_name: str) -> str:
-        """Clean and format the extracted text."""
-        # Input validation
-        if not text or text.strip() == "":
-            print(f"Warning: Empty text provided for cleaning from {book_name}")
-            return "[No text content extracted]"
-        
-        print(f"Cleaning text from {book_name}: {len(text)} characters")
-        
-        prompt = f"""
-        You are tasked with cleaning and formatting OCRed text. The text below was extracted from "{book_name}".
-        
-        INSTRUCTIONS:
-        1. Remove page numbers, headers, footers, and formatting artifacts
-        2. Fix and properly format Sanskrit verses and translations
-        3. Format chapter headings and sections with appropriate markdown
-        4. Preserve diacritical marks in Sanskrit terms
-        5. Clean up any table structures with proper markdown formatting
-        6. Replace any references to "Paramahamsa Nithyananda" or "Nithyananda" with "THE SUPREME PONTIFF OF HINDUISM BHAGAWAN SRI NITHYANANDA PARAMASHIVAM"
-        7. Replace "India" with "Bharat" and "Indian" with "Hindu"
-        8. Remove ALL contact information (phones, emails, websites, social media)
-        9. Remove ALL book metadata (ISBN, copyright, publication dates, pricing, publisher info)
-        10. Remove numerical statistics about humanitarian activities
-        11. Maintain the original language - do not translate
-        12. Remove unnecessary line breaks and improve flow
-        
-        IMPORTANT: Return ONLY the cleaned text. Do not add explanations, comments, or metadata.
-        If the text appears to be in Tamil, Sanskrit, or another non-English language, preserve it exactly and only clean formatting issues.
-        
-        TEXT TO CLEAN:
-        {text}
-        
-        CLEANED TEXT:
-        """
-        
-        try:
-            response = self.client.models.generate_content(
-                model='gemini-2.5-flash-preview-05-20',
-                contents=[prompt],
-                config=types.GenerateContentConfig(
-                    max_output_tokens=8000,
-                    temperature=0.1
-                )
-            )
-            
-            # Check if response is valid
-            if response is None or not hasattr(response, 'text') or response.text is None:
-                print(f"Warning: Text cleaning API returned None response, using original text")
-                return text
-            
-            cleaned_text = response.text.strip()
-            
-            # Validate the response
-            if not cleaned_text or "text to be cleaned was not provided" in cleaned_text.lower() or "please provide" in cleaned_text.lower():
-                print(f"Warning: Text cleaning API returned invalid response: '{cleaned_text[:100]}...'")
-                print(f"Using original text instead")
-                return text
-            
-            print(f"Text cleaning successful: {len(cleaned_text)} characters")
-            return cleaned_text
-            
-        except Exception as e:
-            print(f"Error in text cleaning: {str(e)}")
-            return text  # Return original if cleaning fails

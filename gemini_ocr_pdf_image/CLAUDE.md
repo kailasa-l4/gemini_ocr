@@ -24,8 +24,7 @@ Images: JPG, JPEG, PNG, BMP, TIFF, TIF, WEBP
 
 1. **GeminiAdvancedOCR** (`ocr_book_processor.py`): Main processing class
    - `combined_pre_assessment()`: Evaluates both legibility and semantic quality in one call
-   - `extract_text()`: Performs actual OCR extraction
-   - `clean_and_process_text()`: Post-processes extracted text
+   - `extract_text()`: Performs actual OCR extraction with markdown formatting
    - Legacy methods: `assess_legibility()`, `validate_semantic_meaning()` (kept for compatibility)
 
 2. **Data Classes**: 
@@ -96,8 +95,6 @@ OUTPUT_DIR=./output
 # INPUT_FILE=path/to/file.pdf
 # INPUT_DIR=path/to/images
 
-# Optional flags
-SKIP_TEXT_CLEANING=false
 
 # Optional thinking configuration
 ENABLE_THINKING_ASSESSMENT=true
@@ -147,19 +144,19 @@ python ocr_book_processor.py --input-file book.pdf --output-dir ./output --api-k
    - Expected semantic quality (does visible text look meaningful?)
    - Comprehensive quality metrics and predictions
    - Decision: proceed to OCR only if both thresholds met
-3. **Conditional OCR Extraction**: Text extraction (only if pre-assessment passed)
-4. **Text Cleaning**: Post-processing and formatting (successful cases only)
-5. **Smart Output Generation**: 
-   - **Successful OCR**: Create MD files with extracted text
+3. **Conditional OCR Extraction with Markdown Formatting**: Text extraction with markdown formatting applied during extraction (only if pre-assessment passed)
+4. **Smart Output Generation**: 
+   - **Successful OCR**: Create MD files with properly formatted markdown text
    - **Failed Assessment**: Store detailed assessment in CSV only (no MD file)
-6. **Comprehensive Progress Tracking**: Enhanced CSV files with full assessment details
+5. **Comprehensive Progress Tracking**: Enhanced CSV files with full assessment details
 
-**Benefits vs. Previous 3-Step Process:**
-- Reduced API calls from 3 → 2 per successful image
-- Reduced API calls from 2-3 → 1 per failed image
-- Lower latency and costs
+**Benefits vs. Previous Process:**
+- **Single-step formatting**: Markdown formatting applied during OCR extraction, not as separate step
+- **Reduced API calls**: No separate text cleaning API call needed
+- **Better formatting**: Gemini can see visual structure and apply appropriate markdown formatting
+- **Cleaner architecture**: No post-processing step required
 - **Enhanced data storage**: All assessment details preserved in CSV
-- **Cleaner output**: MD files only for meaningful OCR results
+- **Cleaner output**: MD files only for meaningful OCR results with proper markdown formatting
 
 ## Assessment Quality Metrics
 
@@ -193,10 +190,66 @@ The system can use Gemini's thinking capability for detailed analysis in two pha
 - Useful for damaged documents, complex layouts, or multilingual content
 - Increases processing time but may improve accuracy for challenging content
 
+## Markdown Formatting
+
+The OCR extraction now automatically applies proper markdown formatting during text extraction:
+
+### Supported Markdown Elements with Strict Consistency Rules
+- **Headings**: 
+  - `#` for main document title only
+  - `## Page X` for page identifiers
+  - `##` for major sections (CONTENTS, CHAPTER titles)
+  - `###` for subsections within chapters
+  - Never multiple `#` headings for parts of the same title
+- **Lists with Consistent Formatting**:
+  - **Table of Contents**: Always bullet lists (*) with page numbers
+  - **Chapter Content**: Always bullet points (-) with italic emphasis for topic titles
+  - **Feature Lists**: Consistent bullet points throughout
+  - **Never mix** different list types within the same section type
+- **Emphasis**: Consistent `*italic*` for topic titles in lists, sparing use of `**bold**`
+- **Spacing**: Standardized blank lines between sections for uniform appearance
+
+### 2-Column Layout Handling
+The OCR system now properly handles 2-column page layouts:
+- **Reading Order**: Left column first (top to bottom), then right column (top to bottom)
+- **Logical Sequence**: Maintains left-to-right, top-to-bottom reading flow in output
+- **Structure Preservation**: Content from both columns is merged in correct reading order
+
+### Enhanced Formatting Rules
+The system now follows strict formatting patterns:
+
+**Contents Section Format:**
+```markdown
+# CONTENTS
+
+## I SECTION NAME
+* Topic Name - Page Number
+* Another Topic - Page Number
+
+## II NEXT SECTION  
+* Topic Name - Page Number
+* Another Topic - Page Number
+```
+
+**Chapter Lists Format:**
+```markdown
+## CHAPTER NAME
+- *Topic Title* Page Number
+- *Another Topic* Page Number
+- *Third Topic* Page Number
+```
+
+### Benefits of Strict Formatting
+- **Consistent visual hierarchy**: Clear, predictable heading structure
+- **Uniform list formatting**: No mixing of list types within sections
+- **Professional appearance**: Standardized spacing and emphasis patterns
+- **Better readability**: Consistent formatting makes content easier to navigate
+- **Quality assurance**: Built-in formatting validation before output
+
 ## Text Processing Rules
 
-The tool includes specific text replacement rules:
+The tool includes specific text replacement rules applied during OCR extraction:
 - Replace "Paramahamsa Nithyananda" → "THE SUPREME PONTIFF OF HINDUISM BHAGAWAN SRI NITHYANANDA PARAMASHIVAM"
 - Replace "India" → "Bharat", "Indian" → "Hindu"
-- Remove contact information, book metadata, and statistics
+- Remove contact information, book metadata, and statistics during extraction
 - Preserve Sanskrit diacritical marks and formatting
