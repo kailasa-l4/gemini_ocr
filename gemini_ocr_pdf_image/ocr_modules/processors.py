@@ -20,9 +20,11 @@ from .utils import find_image_files, get_safe_filename
 class PDFProcessor:
     """Handles PDF document processing."""
     
-    def __init__(self, ocr_engine: GeminiOCREngine):
+    def __init__(self, ocr_engine: GeminiOCREngine, db_logger=None, logs_dir: str = './logs'):
         self.ocr_engine = ocr_engine
-        self.progress_manager = ProgressManager()
+        self.db_logger = db_logger
+        self.logs_dir = logs_dir
+        self.progress_manager = ProgressManager(db_logger=db_logger, logs_dir=logs_dir)
     
     def process_pdf(self, pdf_path: str, output_dir: str, start_page: int = 1, 
                     end_page: Optional[int] = None, dpi: int = 300, 
@@ -41,6 +43,22 @@ class PDFProcessor:
         Returns:
             Path to the final processed markdown file
         """
+        # Start database session if available
+        session_id = None
+        if self.db_logger:
+            session_id = self.db_logger.start_session(
+                input_path=pdf_path,
+                input_type='pdf',
+                output_path=output_dir,
+                configuration={
+                    'start_page': start_page,
+                    'end_page': end_page,
+                    'dpi': dpi,
+                    'legibility_threshold': legibility_threshold,
+                    'semantic_threshold': semantic_threshold
+                }
+            )
+        
         # Setup output paths
         book_name = Path(pdf_path).stem
         book_output_dir = Path(output_dir) / book_name
@@ -160,6 +178,26 @@ class PDFProcessor:
                     # Save progress after each page
                     self.progress_manager.save_page_progress(progress, str(progress_file))
                     
+                    # Log to database if available
+                    if self.db_logger and session_id:
+                        self.db_logger.log_processing_complete(
+                            session_id=session_id,
+                            file_path=pdf_path,
+                            page_number=page_num,
+                            status=status,
+                            legibility_score=assessment_result.legibility_score,
+                            semantic_score=semantic_score,
+                            ocr_confidence=ocr_confidence,
+                            processing_time=total_processing_time,
+                            text_clarity=assessment_result.text_clarity,
+                            image_quality=assessment_result.image_quality,
+                            ocr_prediction=assessment_result.ocr_prediction,
+                            semantic_prediction=assessment_result.semantic_prediction,
+                            visible_text_sample=assessment_result.visible_text_sample,
+                            language_detected=assessment_result.language_detected,
+                            issues_found=', '.join(assessment_result.issues_found)
+                        )
+                    
                     pbar.update(1)
                     pbar.set_description(f"Completed page {page_num}")
                     
@@ -196,6 +234,28 @@ class PDFProcessor:
                     )
                     
                     self.progress_manager.save_page_progress(progress, str(progress_file))
+                    
+                    # Log error to database if available
+                    if self.db_logger and session_id:
+                        self.db_logger.log_processing_complete(
+                            session_id=session_id,
+                            file_path=pdf_path,
+                            page_number=page_num,
+                            status='error',
+                            error_message=str(e)
+                        )
+                        # Also log the error specifically
+                        import traceback
+                        self.db_logger.log_error(
+                            error_type="PageProcessingError",
+                            error_message=str(e),
+                            stack_trace=traceback.format_exc(),
+                            file_path=pdf_path,
+                            function_name="process_pdf",
+                            severity="medium",
+                            session_id=session_id
+                        )
+                    
                     pbar.update(1)
         
         doc.close()
@@ -217,15 +277,27 @@ class PDFProcessor:
         print(f"- Progress saved to: {progress_file}")
         print(f"- Final output: {final_output_file}")
         
+        # End database session if available
+        if self.db_logger and session_id:
+            self.db_logger.update_session(
+                session_id,
+                total_files=len(progress),
+                completed_files=completed,
+                failed_files=illegible + semantic_invalid + errors
+            )
+            self.db_logger.end_session(session_id, 'completed')
+        
         return str(final_output_file)
 
 
 class ImageProcessor:
     """Handles single image processing."""
     
-    def __init__(self, ocr_engine: GeminiOCREngine):
+    def __init__(self, ocr_engine: GeminiOCREngine, db_logger=None, logs_dir: str = './logs'):
         self.ocr_engine = ocr_engine
-        self.progress_manager = ProgressManager()
+        self.db_logger = db_logger
+        self.logs_dir = logs_dir
+        self.progress_manager = ProgressManager(db_logger=db_logger, logs_dir=logs_dir)
     
     def process_single_image(self, image_path: str, output_dir: str, 
                            legibility_threshold: float = 0.5, semantic_threshold: float = 0.6) -> str:
@@ -397,9 +469,11 @@ class ImageProcessor:
 class ImageDirectoryProcessor:
     """Handles batch processing of image directories."""
     
-    def __init__(self, ocr_engine: GeminiOCREngine):
+    def __init__(self, ocr_engine: GeminiOCREngine, db_logger=None, logs_dir: str = './logs'):
         self.ocr_engine = ocr_engine
-        self.progress_manager = ProgressManager()
+        self.db_logger = db_logger
+        self.logs_dir = logs_dir
+        self.progress_manager = ProgressManager(db_logger=db_logger, logs_dir=logs_dir)
     
     def process_images(self, input_dir: str, output_dir: str, 
                       legibility_threshold: float = 0.5, semantic_threshold: float = 0.6) -> str:

@@ -72,6 +72,9 @@ uv sync
 cp .env.example .env
 # Edit .env file with your settings
 
+# Test database connection (optional)
+python test_db_integration.py
+
 # Run the OCR processor
 python ocr_book_processor.py --help
 ```
@@ -90,11 +93,20 @@ SEMANTIC_THRESHOLD=0.6
 THINKING_BUDGET=2000
 DPI=300
 
+# Optional database logging configuration
+ENABLE_DATABASE_LOGGING=true
+DATABASE_URL=postgresql://ocr:rmtetn5qek6zikol@157.180.15.165:1111/db
+DATABASE_CONNECTION_TIMEOUT=30
+DATABASE_RETRY_ATTEMPTS=3
+
+# Optional logging configuration
+LOGS_DIR=./logs
+CSV_LOGS_DIR=./logs
+
 # Optional paths (can be overridden by CLI)
 OUTPUT_DIR=./output
 # INPUT_FILE=path/to/file.pdf
 # INPUT_DIR=path/to/images
-
 
 # Optional thinking configuration
 ENABLE_THINKING_ASSESSMENT=true
@@ -133,6 +145,97 @@ python ocr_book_processor.py --input-file book.pdf --output-dir ./output --api-k
 - `pymupdf`: PDF processing (fitz)
 - `pillow`: Image processing
 - `tqdm`: Progress bars
+- `psycopg2-binary`: PostgreSQL database connectivity (optional)
+
+## Database Logging
+
+The OCR processor includes comprehensive PostgreSQL database logging capabilities:
+
+### Features
+- **Session Tracking**: Each OCR run gets a unique session ID with metadata
+- **Processing Logs**: Detailed logs for every page/image processed
+- **Error Logging**: System errors and exceptions with stack traces
+- **Multi-Session Support**: Handle concurrent OCR processes from different locations
+- **Fail-Fast Validation**: OCR won't start if database is enabled but unavailable
+- **Dual Storage**: Both local CSV files (in `/logs` folder) AND database logging
+
+### Database Schema
+```sql
+-- OCR processing sessions (multiple sessions can run simultaneously)
+CREATE TABLE ocr_sessions (
+    id SERIAL PRIMARY KEY,
+    session_id VARCHAR(50) UNIQUE,
+    hostname VARCHAR(100),
+    start_time TIMESTAMP DEFAULT NOW(),
+    end_time TIMESTAMP,
+    input_path VARCHAR(500),
+    input_type VARCHAR(20), -- 'pdf', 'image', 'directory'
+    output_path VARCHAR(500),
+    status VARCHAR(20), -- 'running', 'completed', 'failed', 'interrupted'
+    total_files INTEGER,
+    completed_files INTEGER,
+    failed_files INTEGER,
+    configuration JSONB
+);
+
+-- Individual file processing logs with comprehensive assessment details
+CREATE TABLE processing_logs (
+    id SERIAL PRIMARY KEY,
+    session_id VARCHAR(50) REFERENCES ocr_sessions(session_id),
+    file_path VARCHAR(500),
+    page_number INTEGER,
+    processing_start TIMESTAMP DEFAULT NOW(),
+    processing_end TIMESTAMP,
+    status VARCHAR(30), -- 'completed', 'illegible', 'semantically_invalid', 'error'
+    legibility_score DECIMAL(3,2),
+    semantic_score DECIMAL(3,2),
+    ocr_confidence DECIMAL(3,2),
+    processing_time DECIMAL(10,6),
+    text_clarity VARCHAR(20),
+    image_quality VARCHAR(20),
+    ocr_prediction VARCHAR(30),
+    semantic_prediction VARCHAR(30),
+    visible_text_sample TEXT,
+    language_detected VARCHAR(50),
+    issues_found TEXT,
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- System errors and exceptions
+CREATE TABLE error_logs (
+    id SERIAL PRIMARY KEY,
+    session_id VARCHAR(50),
+    error_type VARCHAR(100),
+    error_message TEXT,
+    stack_trace TEXT,
+    file_path VARCHAR(500),
+    function_name VARCHAR(100),
+    line_number INTEGER,
+    severity VARCHAR(20), -- 'low', 'medium', 'high', 'critical'
+    hostname VARCHAR(100),
+    created_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+### Configuration
+Set `ENABLE_DATABASE_LOGGING=true` in your `.env` file and provide the database URL:
+```bash
+ENABLE_DATABASE_LOGGING=true
+DATABASE_URL=postgresql://ocr:rmtetn5qek6zikol@157.180.15.165:1111/db
+```
+
+### Usage
+```bash
+# With database logging enabled (via .env)
+python ocr_book_processor.py --input-file document.pdf
+
+# Disable database logging for specific run
+python ocr_book_processor.py --input-file document.pdf --disable-database-logging
+
+# Test database connection
+python test_db_integration.py
+```
 
 ## Processing Pipeline
 

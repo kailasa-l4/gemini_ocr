@@ -4,19 +4,33 @@ Progress tracking and CSV management for OCR processing.
 
 import os
 import csv
-from typing import Dict
+from typing import Dict, Optional
+from pathlib import Path
 from .models import PageProgress, ImageProgress
 
 
 class ProgressManager:
-    """Handles loading and saving progress data to CSV files."""
+    """Handles loading and saving progress data to CSV files and database."""
     
-    @staticmethod
-    def load_page_progress(progress_file: str) -> Dict[int, PageProgress]:
+    def __init__(self, db_logger=None, logs_dir: str = './logs'):
+        """Initialize progress manager with optional database logger."""
+        self.db_logger = db_logger
+        self.logs_dir = logs_dir
+        
+        # Ensure logs directory exists
+        Path(self.logs_dir).mkdir(parents=True, exist_ok=True)
+    
+    def _get_csv_path(self, progress_file: str) -> str:
+        """Get the CSV file path in the logs directory."""
+        filename = Path(progress_file).name
+        return str(Path(self.logs_dir) / filename)
+    
+    def load_page_progress(self, progress_file: str) -> Dict[int, PageProgress]:
         """Load processing progress from CSV file."""
         progress = {}
-        if os.path.exists(progress_file):
-            with open(progress_file, 'r', newline='', encoding='utf-8') as f:
+        csv_path = self._get_csv_path(progress_file)
+        if os.path.exists(csv_path):
+            with open(csv_path, 'r', newline='', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
                     page_num = int(row['page_num'])
@@ -39,14 +53,14 @@ class ProgressManager:
                     )
         return progress
     
-    @staticmethod
-    def save_page_progress(progress: Dict[int, PageProgress], progress_file: str):
-        """Save processing progress to CSV file."""
+    def save_page_progress(self, progress: Dict[int, PageProgress], progress_file: str):
+        """Save processing progress to CSV file and optionally to database."""
         fieldnames = ['page_num', 'status', 'legibility_score', 'semantic_score', 'ocr_confidence', 
                      'processing_time', 'error_message', 'timestamp', 'text_clarity', 'image_quality',
                      'ocr_prediction', 'semantic_prediction', 'visible_text_sample', 'language_detected', 'issues_found']
         
-        with open(progress_file, 'w', newline='', encoding='utf-8') as f:
+        csv_path = self._get_csv_path(progress_file)
+        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for page_progress in sorted(progress.values(), key=lambda x: x.page_num):
@@ -68,12 +82,12 @@ class ProgressManager:
                     'issues_found': page_progress.issues_found
                 })
     
-    @staticmethod
-    def load_image_progress(progress_file: str) -> Dict[str, ImageProgress]:
+    def load_image_progress(self, progress_file: str) -> Dict[str, ImageProgress]:
         """Load image processing progress from CSV file."""
         progress = {}
-        if os.path.exists(progress_file):
-            with open(progress_file, 'r', newline='', encoding='utf-8') as f:
+        csv_path = self._get_csv_path(progress_file)
+        if os.path.exists(csv_path):
+            with open(csv_path, 'r', newline='', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
                     file_path = row['file_path']
@@ -96,14 +110,14 @@ class ProgressManager:
                     )
         return progress
     
-    @staticmethod
-    def save_image_progress(progress: Dict[str, ImageProgress], progress_file: str):
-        """Save image processing progress to CSV file."""
+    def save_image_progress(self, progress: Dict[str, ImageProgress], progress_file: str):
+        """Save image processing progress to CSV file and optionally to database."""
         fieldnames = ['file_path', 'status', 'legibility_score', 'semantic_score', 'ocr_confidence', 
                      'processing_time', 'error_message', 'timestamp', 'text_clarity', 'image_quality',
                      'ocr_prediction', 'semantic_prediction', 'visible_text_sample', 'language_detected', 'issues_found']
         
-        with open(progress_file, 'w', newline='', encoding='utf-8') as f:
+        csv_path = self._get_csv_path(progress_file)
+        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for image_progress in sorted(progress.values(), key=lambda x: x.file_path):

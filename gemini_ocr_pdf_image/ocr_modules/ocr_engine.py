@@ -19,12 +19,15 @@ class GeminiOCREngine:
     """Core OCR processing engine using Gemini 2.5 Flash."""
     
     def __init__(self, api_key: str, thinking_budget: int = 2000, 
-                 enable_thinking_assessment: bool = True, enable_thinking_ocr: bool = False):
+                 enable_thinking_assessment: bool = True, enable_thinking_ocr: bool = False,
+                 db_logger=None, logs_dir: str = './logs'):
         """Initialize the OCR engine with Google Gen AI SDK."""
         self.api_key = api_key
         self.thinking_budget = thinking_budget
         self.enable_thinking_assessment = enable_thinking_assessment
         self.enable_thinking_ocr = enable_thinking_ocr
+        self.db_logger = db_logger
+        self.logs_dir = logs_dir
         
         # Setup logging first
         self.setup_logging()
@@ -48,9 +51,8 @@ class GeminiOCREngine:
     def setup_logging(self):
         """Setup logging configuration with file output."""
         # Create logs directory if it doesn't exist
-        logs_dir = "logs"
-        if not os.path.exists(logs_dir):
-            os.makedirs(logs_dir)
+        if not os.path.exists(self.logs_dir):
+            os.makedirs(self.logs_dir)
         
         # Setup logger
         self.logger = logging.getLogger('GeminiOCREngine')
@@ -58,7 +60,7 @@ class GeminiOCREngine:
         
         # Create file handler with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_file = os.path.join(logs_dir, f"ocr_debug_{timestamp}.log")
+        log_file = os.path.join(self.logs_dir, f"ocr_debug_{timestamp}.log")
         
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(logging.DEBUG)
@@ -198,7 +200,21 @@ class GeminiOCREngine:
             
         except Exception as e:
             processing_time = time.time() - start_time
-            print(f"Error in combined assessment for page {page_num}: {str(e)}")
+            error_msg = f"Error in combined assessment for page {page_num}: {str(e)}"
+            print(error_msg)
+            self.logger.error(error_msg)
+            
+            # Log to database if available
+            if self.db_logger:
+                import traceback
+                self.db_logger.log_error(
+                    error_type="CombinedAssessmentError",
+                    error_message=str(e),
+                    stack_trace=traceback.format_exc(),
+                    function_name="combined_pre_assessment",
+                    severity="high"
+                )
+            
             return CombinedAssessmentResult(
                 should_process=False,
                 legibility_score=0.0,

@@ -13,17 +13,23 @@ class GeminiAdvancedOCR:
     """Main OCR processor class that orchestrates all components."""
     
     def __init__(self, api_key: str, thinking_budget: int = 2000, 
-                 enable_thinking_assessment: bool = True, enable_thinking_ocr: bool = False):
+                 enable_thinking_assessment: bool = True, enable_thinking_ocr: bool = False,
+                 db_logger=None, logs_dir: str = './logs'):
         """Initialize the modular OCR processor."""
+        # Store database logger and logs directory
+        self.db_logger = db_logger
+        self.logs_dir = logs_dir
+        
         # Initialize the OCR engine
         self.ocr_engine = GeminiOCREngine(
-            api_key, thinking_budget, enable_thinking_assessment, enable_thinking_ocr
+            api_key, thinking_budget, enable_thinking_assessment, enable_thinking_ocr,
+            db_logger=db_logger, logs_dir=logs_dir
         )
         
         # Initialize processors
-        self.pdf_processor = PDFProcessor(self.ocr_engine)
-        self.image_processor = ImageProcessor(self.ocr_engine)
-        self.directory_processor = ImageDirectoryProcessor(self.ocr_engine)
+        self.pdf_processor = PDFProcessor(self.ocr_engine, db_logger=db_logger, logs_dir=logs_dir)
+        self.image_processor = ImageProcessor(self.ocr_engine, db_logger=db_logger, logs_dir=logs_dir)
+        self.directory_processor = ImageDirectoryProcessor(self.ocr_engine, db_logger=db_logger, logs_dir=logs_dir)
     
     # Delegate methods to the OCR engine for backward compatibility
     def combined_pre_assessment(self, image, page_num, legibility_threshold=0.5, semantic_threshold=0.6):

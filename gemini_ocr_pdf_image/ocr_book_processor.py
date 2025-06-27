@@ -64,6 +64,22 @@ def load_env_config():
     if os.getenv('ENABLE_THINKING_OCR'):
         config['enable_thinking_ocr'] = os.getenv('ENABLE_THINKING_OCR').lower() in ('true', '1', 'yes')
     
+    # Database logging configuration
+    if os.getenv('ENABLE_DATABASE_LOGGING'):
+        config['enable_database_logging'] = os.getenv('ENABLE_DATABASE_LOGGING').lower() in ('true', '1', 'yes')
+    if os.getenv('DATABASE_URL'):
+        config['database_url'] = os.getenv('DATABASE_URL')
+    if os.getenv('DATABASE_CONNECTION_TIMEOUT'):
+        config['database_connection_timeout'] = int(os.getenv('DATABASE_CONNECTION_TIMEOUT'))
+    if os.getenv('DATABASE_RETRY_ATTEMPTS'):
+        config['database_retry_attempts'] = int(os.getenv('DATABASE_RETRY_ATTEMPTS'))
+    
+    # Logging directory configuration
+    if os.getenv('LOGS_DIR'):
+        config['logs_dir'] = os.getenv('LOGS_DIR')
+    if os.getenv('CSV_LOGS_DIR'):
+        config['csv_logs_dir'] = os.getenv('CSV_LOGS_DIR')
+    
     return config
 
 
@@ -122,7 +138,47 @@ def main():
                        default=env_config.get('enable_thinking_ocr', False),
                        help="Enable thinking for OCR extraction phase")
     
+    # Database logging options
+    parser.add_argument("--enable-database-logging", action="store_true", 
+                       default=env_config.get('enable_database_logging', False),
+                       help="Enable database logging")
+    parser.add_argument("--disable-database-logging", action="store_true", 
+                       help="Disable database logging (override .env)")
+    parser.add_argument("--database-url", 
+                       default=env_config.get('database_url'),
+                       help="PostgreSQL database URL")
+    
     args = parser.parse_args()
+    
+    # Handle database logging flags
+    database_logging_enabled = args.enable_database_logging
+    if args.disable_database_logging:
+        database_logging_enabled = False
+    
+    # Validate database connection if enabled
+    db_logger = None
+    if database_logging_enabled:
+        if not args.database_url:
+            print("Error: Database logging is enabled but no database URL provided.")
+            print("Please provide --database-url or set DATABASE_URL in .env file.")
+            return
+        
+        try:
+            from ocr_modules.db_logger import DatabaseLogger
+            db_logger = DatabaseLogger(
+                database_url=args.database_url,
+                enabled=True,
+                connection_timeout=env_config.get('database_connection_timeout', 30),
+                retry_attempts=env_config.get('database_retry_attempts', 3)
+            )
+            print("✓ Database connection validated successfully")
+        except Exception as e:
+            print(f"✗ Database connection failed: {e}")
+            print("OCR processing cannot continue with database logging enabled.")
+            print("Either fix the database connection or disable database logging.")
+            return
+    else:
+        print("Database logging is disabled")
     
     # Validate inputs
     if args.input_file and not os.path.exists(args.input_file):
@@ -138,7 +194,9 @@ def main():
         args.api_key, 
         thinking_budget=args.thinking_budget,
         enable_thinking_assessment=args.enable_thinking_assessment,
-        enable_thinking_ocr=args.enable_thinking_ocr
+        enable_thinking_ocr=args.enable_thinking_ocr,
+        db_logger=db_logger,
+        logs_dir=env_config.get('logs_dir', './logs')
     )
     
     # Process based on input type
