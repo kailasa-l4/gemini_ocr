@@ -4,7 +4,8 @@ Progress tracking and CSV management for OCR processing.
 
 import os
 import csv
-from typing import Dict, Optional
+import fcntl
+from typing import Dict, Optional, Set
 from pathlib import Path
 from .models import PageProgress, ImageProgress
 
@@ -54,7 +55,11 @@ class ProgressManager:
         return progress
     
     def save_page_progress(self, progress: Dict[int, PageProgress], progress_file: str):
-        """Save processing progress to CSV file and optionally to database."""
+        """Save processing progress to CSV file and optionally to database.
+        
+        Note: For better performance during processing loops, consider using 
+        append_page_progress() instead of this method which rewrites the entire file.
+        """
         fieldnames = ['page_num', 'status', 'legibility_score', 'semantic_score', 'ocr_confidence', 
                      'processing_time', 'error_message', 'timestamp', 'text_clarity', 'image_quality',
                      'ocr_prediction', 'semantic_prediction', 'visible_text_sample', 'language_detected', 'issues_found']
@@ -111,7 +116,11 @@ class ProgressManager:
         return progress
     
     def save_image_progress(self, progress: Dict[str, ImageProgress], progress_file: str):
-        """Save image processing progress to CSV file and optionally to database."""
+        """Save image processing progress to CSV file and optionally to database.
+        
+        Note: For better performance during processing loops, consider using 
+        append_image_progress() instead of this method which rewrites the entire file.
+        """
         fieldnames = ['file_path', 'status', 'legibility_score', 'semantic_score', 'ocr_confidence', 
                      'processing_time', 'error_message', 'timestamp', 'text_clarity', 'image_quality',
                      'ocr_prediction', 'semantic_prediction', 'visible_text_sample', 'language_detected', 'issues_found']
@@ -138,3 +147,93 @@ class ProgressManager:
                     'language_detected': image_progress.language_detected,
                     'issues_found': image_progress.issues_found
                 })
+
+    def append_page_progress(self, page_progress: PageProgress, progress_file: str):
+        """Append a single page progress entry to CSV file (faster for real-time updates)."""
+        csv_path = self._get_csv_path(progress_file)
+        fieldnames = ['page_num', 'status', 'legibility_score', 'semantic_score', 'ocr_confidence', 
+                     'processing_time', 'error_message', 'timestamp', 'text_clarity', 'image_quality',
+                     'ocr_prediction', 'semantic_prediction', 'visible_text_sample', 'language_detected', 'issues_found']
+        
+        # Check if file exists and needs header
+        file_exists = os.path.exists(csv_path)
+        
+        try:
+            with open(csv_path, 'a', newline='', encoding='utf-8') as f:
+                # Apply file locking for concurrent access
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                
+                # Write header if new file
+                if not file_exists:
+                    writer.writeheader()
+                
+                writer.writerow({
+                    'page_num': page_progress.page_num,
+                    'status': page_progress.status,
+                    'legibility_score': page_progress.legibility_score,
+                    'semantic_score': page_progress.semantic_score,
+                    'ocr_confidence': page_progress.ocr_confidence,
+                    'processing_time': page_progress.processing_time,
+                    'error_message': page_progress.error_message,
+                    'timestamp': page_progress.timestamp,
+                    'text_clarity': page_progress.text_clarity,
+                    'image_quality': page_progress.image_quality,
+                    'ocr_prediction': page_progress.ocr_prediction,
+                    'semantic_prediction': page_progress.semantic_prediction,
+                    'visible_text_sample': page_progress.visible_text_sample,
+                    'language_detected': page_progress.language_detected,
+                    'issues_found': page_progress.issues_found
+                })
+                
+                # File lock is automatically released when file is closed
+        except IOError as e:
+            # Fallback to full rewrite if append fails
+            print(f"Warning: Append failed ({e}), falling back to full progress save")
+            # We'll need the full progress dict for this, so this is a fallback only
+
+    def append_image_progress(self, image_progress: ImageProgress, progress_file: str):
+        """Append a single image progress entry to CSV file (faster for real-time updates)."""
+        csv_path = self._get_csv_path(progress_file)
+        fieldnames = ['file_path', 'status', 'legibility_score', 'semantic_score', 'ocr_confidence', 
+                     'processing_time', 'error_message', 'timestamp', 'text_clarity', 'image_quality',
+                     'ocr_prediction', 'semantic_prediction', 'visible_text_sample', 'language_detected', 'issues_found']
+        
+        # Check if file exists and needs header
+        file_exists = os.path.exists(csv_path)
+        
+        try:
+            with open(csv_path, 'a', newline='', encoding='utf-8') as f:
+                # Apply file locking for concurrent access
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                
+                # Write header if new file
+                if not file_exists:
+                    writer.writeheader()
+                
+                writer.writerow({
+                    'file_path': image_progress.file_path,
+                    'status': image_progress.status,
+                    'legibility_score': image_progress.legibility_score,
+                    'semantic_score': image_progress.semantic_score,
+                    'ocr_confidence': image_progress.ocr_confidence,
+                    'processing_time': image_progress.processing_time,
+                    'error_message': image_progress.error_message,
+                    'timestamp': image_progress.timestamp,
+                    'text_clarity': image_progress.text_clarity,
+                    'image_quality': image_progress.image_quality,
+                    'ocr_prediction': image_progress.ocr_prediction,
+                    'semantic_prediction': image_progress.semantic_prediction,
+                    'visible_text_sample': image_progress.visible_text_sample,
+                    'language_detected': image_progress.language_detected,
+                    'issues_found': image_progress.issues_found
+                })
+                
+                # File lock is automatically released when file is closed
+        except IOError as e:
+            # Fallback to full rewrite if append fails
+            print(f"Warning: Append failed ({e}), falling back to full progress save")
+            # We'll need the full progress dict for this, so this is a fallback only

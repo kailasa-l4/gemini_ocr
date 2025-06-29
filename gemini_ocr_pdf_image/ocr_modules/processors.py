@@ -85,9 +85,22 @@ class PDFProcessor:
         pages_to_process = range(start_page - 1, end_page)  # 0-based index
         num_pages = len(pages_to_process)
         
+        # Calculate progress summary
+        page_numbers = [i + 1 for i in pages_to_process]  # Convert to 1-based
+        completed_pages = sum(1 for page_num in page_numbers 
+                            if page_num in progress and progress[page_num].status == 'completed')
+        remaining_pages = num_pages - completed_pages
+        
         print(f"Processing pages {start_page} to {end_page} ({num_pages} pages)")
+        print(f"Progress: {completed_pages}/{num_pages} completed ({remaining_pages} remaining)")
+        print(f"Completion: {(completed_pages/num_pages)*100:.1f}%")
         print(f"Legibility threshold: {legibility_threshold}")
         print(f"Semantic threshold: {semantic_threshold}")
+        
+        if completed_pages > 0:
+            print(f"Resuming from previous session...")
+        if remaining_pages == 0:
+            print("All pages already processed! Output file is up to date.")
         
         # Initialize final output file (only if starting fresh)
         if not final_output_file.exists():
@@ -98,7 +111,9 @@ class PDFProcessor:
             print(f"Resuming with existing output file: {final_output_file}")
         
         # Process pages with incremental saving
-        with tqdm(total=num_pages, desc="Processing pages", unit="page") as pbar:
+        with tqdm(total=num_pages, initial=completed_pages, 
+                  desc=f"Processing pages ({remaining_pages} remaining)", unit="page") as pbar:
+            pages_processed_this_session = 0
             for i in pages_to_process:
                 page_num = i + 1  # Convert to 1-based
                 
@@ -157,7 +172,7 @@ class PDFProcessor:
                     if 'ocr_result' in locals():
                         total_processing_time += ocr_result.processing_time
                     
-                    progress[page_num] = PageProgress(
+                    page_progress = PageProgress(
                         page_num=page_num,
                         status=status,
                         legibility_score=assessment_result.legibility_score,
@@ -174,9 +189,10 @@ class PDFProcessor:
                         language_detected=assessment_result.language_detected,
                         issues_found=', '.join(assessment_result.issues_found)
                     )
+                    progress[page_num] = page_progress
                     
-                    # Save progress after each page
-                    self.progress_manager.save_page_progress(progress, str(progress_file))
+                    # Save progress incrementally (faster than rewriting entire file)
+                    self.progress_manager.append_page_progress(page_progress, str(progress_file))
                     
                     # Log to database if available
                     if self.db_logger and session_id:
@@ -199,7 +215,9 @@ class PDFProcessor:
                         )
                     
                     pbar.update(1)
-                    pbar.set_description(f"Completed page {page_num}")
+                    pages_processed_this_session += 1
+                    current_remaining = remaining_pages - pages_processed_this_session
+                    pbar.set_description(f"Processing pages ({current_remaining} remaining)")
                     
                     # Rate limiting
                     time.sleep(1)
@@ -215,7 +233,7 @@ class PDFProcessor:
                         f.write(error_content)
                         f.write("\n\n---\n\n")
                     
-                    progress[page_num] = PageProgress(
+                    error_page_progress = PageProgress(
                         page_num=page_num,
                         status='error',
                         legibility_score=None,
@@ -232,8 +250,10 @@ class PDFProcessor:
                         language_detected=None,
                         issues_found=None
                     )
+                    progress[page_num] = error_page_progress
                     
-                    self.progress_manager.save_page_progress(progress, str(progress_file))
+                    # Save progress incrementally
+                    self.progress_manager.append_page_progress(error_page_progress, str(progress_file))
                     
                     # Log error to database if available
                     if self.db_logger and session_id:
@@ -257,25 +277,40 @@ class PDFProcessor:
                         )
                     
                     pbar.update(1)
+                    pages_processed_this_session += 1
+                    current_remaining = remaining_pages - pages_processed_this_session
+                    pbar.set_description(f"Processing pages ({current_remaining} remaining)")
         
         doc.close()
         
         # Final file already written incrementally during processing
-        print("\nProcessing complete - content saved incrementally to final file.")
         
         # Print summary
         completed = sum(1 for p in progress.values() if p.status == 'completed')
         illegible = sum(1 for p in progress.values() if p.status == 'illegible')
         semantic_invalid = sum(1 for p in progress.values() if p.status == 'semantically_invalid')
         errors = sum(1 for p in progress.values() if p.status == 'error')
+        total_processed = len(progress)
         
-        print(f"\nProcessing completed:")
-        print(f"- Successful OCR: {completed} pages")
-        print(f"- Visually illegible: {illegible} pages")
-        print(f"- Semantically invalid: {semantic_invalid} pages")
-        print(f"- Error pages: {errors} pages")
-        print(f"- Progress saved to: {progress_file}")
-        print(f"- Final output: {final_output_file}")
+        print(f"\n{'='*60}")
+        print(f"PDF PROCESSING COMPLETE")
+        print(f"{'='*60}")
+        print(f"Total pages processed: {total_processed}/{num_pages}")
+        print(f"Success rate: {(completed/total_processed)*100:.1f}%" if total_processed > 0 else "Success rate: 0%")
+        print(f"")
+        print(f"Results breakdown:")
+        print(f"  ✓ Successful OCR: {completed} pages")
+        print(f"  👁 Visually illegible: {illegible} pages") 
+        print(f"  🧠 Semantically invalid: {semantic_invalid} pages")
+        print(f"  ❌ Error pages: {errors} pages")
+        print(f"")
+        print(f"Files generated:")
+        print(f"  📊 Progress log: {progress_file}")
+        print(f"  📄 Final output: {final_output_file}")
+        
+        if pages_processed_this_session > 0:
+            print(f"")
+            print(f"This session processed: {pages_processed_this_session} new pages")
         
         # End database session if available
         if self.db_logger and session_id:
@@ -509,27 +544,36 @@ class ImageDirectoryProcessor:
         # Load existing progress (using file path as key instead of page number)
         progress = self.progress_manager.load_image_progress(str(progress_file))
         
-        print(f"Processing {len(image_files)} images")
+        # Calculate progress summary
+        total_files = len(image_files)
+        completed_count = sum(1 for _, relative_path in image_files 
+                            if relative_path in progress and progress[relative_path].status == 'completed')
+        remaining_count = total_files - completed_count
+        
+        print(f"Processing {total_files} images")
+        print(f"Progress: {completed_count}/{total_files} completed ({remaining_count} remaining)")
+        print(f"Completion: {(completed_count/total_files)*100:.1f}%")
         print(f"Legibility threshold: {legibility_threshold}")
         print(f"Semantic threshold: {semantic_threshold}")
+        
+        if completed_count > 0:
+            print(f"Resuming from previous session...")
+        if remaining_count == 0:
+            print("All images already processed! Generating final output file...")
         
         # Process images
         all_content = {}
         
-        with tqdm(total=len(image_files), desc="Processing images", unit="image") as pbar:
+        with tqdm(total=len(image_files), initial=completed_count, 
+                  desc=f"Processing images ({remaining_count} remaining)", unit="image") as pbar:
+            files_processed_this_session = 0
             for idx, (file_path, relative_path) in enumerate(image_files, 1):
                 
                 # Check if already processed
                 if relative_path in progress and progress[relative_path].status == 'completed':
                     pbar.update(1)
                     pbar.set_description(f"Skipping completed: {Path(relative_path).name}")
-                    
-                    # Load existing content
-                    safe_filename = get_safe_filename(relative_path)
-                    image_file = output_dir_path / f"{safe_filename}.md"
-                    if image_file.exists():
-                        with open(image_file, 'r', encoding='utf-8') as f:
-                            all_content[relative_path] = f.read()
+                    # Note: Content will be loaded later during final file generation
                     continue
                 
                 try:
@@ -591,7 +635,7 @@ class ImageDirectoryProcessor:
                         total_processing_time += ocr_result.processing_time
                     
                     # Update progress
-                    progress[relative_path] = ImageProgress(
+                    image_progress = ImageProgress(
                         file_path=relative_path,
                         status=status,
                         legibility_score=assessment_result.legibility_score,
@@ -608,12 +652,15 @@ class ImageDirectoryProcessor:
                         language_detected=assessment_result.language_detected,
                         issues_found=', '.join(assessment_result.issues_found)
                     )
+                    progress[relative_path] = image_progress
                     
-                    # Save progress after each image
-                    self.progress_manager.save_image_progress(progress, str(progress_file))
+                    # Save progress incrementally (faster than rewriting entire file)
+                    self.progress_manager.append_image_progress(image_progress, str(progress_file))
                     
                     pbar.update(1)
-                    pbar.set_description(f"Completed: {Path(relative_path).name}")
+                    files_processed_this_session += 1
+                    current_remaining = remaining_count - files_processed_this_session
+                    pbar.set_description(f"Processing images ({current_remaining} remaining)")
                     
                     # Rate limiting
                     time.sleep(1)
@@ -631,7 +678,7 @@ class ImageDirectoryProcessor:
                     
                     all_content[relative_path] = image_content
                     
-                    progress[relative_path] = ImageProgress(
+                    error_progress = ImageProgress(
                         file_path=relative_path,
                         status='error',
                         legibility_score=None,
@@ -648,32 +695,59 @@ class ImageDirectoryProcessor:
                         language_detected=None,
                         issues_found=None
                     )
+                    progress[relative_path] = error_progress
                     
-                    self.progress_manager.save_image_progress(progress, str(progress_file))
+                    # Save progress incrementally
+                    self.progress_manager.append_image_progress(error_progress, str(progress_file))
                     pbar.update(1)
+                    files_processed_this_session += 1
+                    current_remaining = remaining_count - files_processed_this_session
+                    pbar.set_description(f"Processing images ({current_remaining} remaining)")
         
         # Combine all images into final markdown file
         print("\nCombining images into final markdown file...")
-        final_content = [f"# {dir_name} - Image OCR Results\n\n"]
+        
+        # Helper function to load content on-demand
+        def load_content_for_file(relative_path):
+            """Load content from file on-demand."""
+            if relative_path in all_content:
+                return all_content[relative_path]
+            
+            # Load from file if exists
+            safe_filename = get_safe_filename(relative_path)
+            image_file = output_dir_path / f"{safe_filename}.md"
+            if image_file.exists():
+                with open(image_file, 'r', encoding='utf-8') as f:
+                    return f.read()
+            return ""
+        
+        # Get all processed files (both in-memory and from completed progress)
+        all_processed_files = set(all_content.keys())
+        for relative_path, prog in progress.items():
+            if prog.status == 'completed':
+                all_processed_files.add(relative_path)
         
         # Group by subdirectory for better organization
         grouped_content = {}
-        for relative_path in sorted(all_content.keys()):
+        for relative_path in sorted(all_processed_files):
             subdir = str(Path(relative_path).parent) if Path(relative_path).parent != Path('.') else 'root'
             if subdir not in grouped_content:
                 grouped_content[subdir] = []
-            grouped_content[subdir].append((relative_path, all_content[relative_path]))
+            grouped_content[subdir].append(relative_path)
         
-        for subdir in sorted(grouped_content.keys()):
-            if subdir != 'root':
-                final_content.append(f"## {subdir}\n\n")
-            
-            for relative_path, content in grouped_content[subdir]:
-                final_content.append(content)
-                final_content.append("\n\n---\n\n")  # Content separator
-        
+        # Stream content directly to final file
         with open(final_output_file, 'w', encoding='utf-8') as f:
-            f.write("".join(final_content))
+            f.write(f"# {dir_name} - Image OCR Results\n\n")
+            
+            for subdir in sorted(grouped_content.keys()):
+                if subdir != 'root':
+                    f.write(f"## {subdir}\n\n")
+                
+                for relative_path in grouped_content[subdir]:
+                    content = load_content_for_file(relative_path)
+                    if content:  # Only write non-empty content
+                        f.write(content)
+                        f.write("\n\n---\n\n")  # Content separator
         
         # Print summary
         completed = sum(1 for p in progress.values() if p.status == 'completed')
@@ -681,12 +755,26 @@ class ImageDirectoryProcessor:
         semantic_invalid = sum(1 for p in progress.values() if p.status == 'semantically_invalid')
         errors = sum(1 for p in progress.values() if p.status == 'error')
         
-        print(f"\nProcessing completed:")
-        print(f"- Successful OCR: {completed} images")
-        print(f"- Visually illegible: {illegible} images")
-        print(f"- Semantically invalid: {semantic_invalid} images")
-        print(f"- Error images: {errors} images")
-        print(f"- Progress saved to: {progress_file}")
-        print(f"- Final output: {final_output_file}")
+        total_processed = len(progress)
+        
+        print(f"\n{'='*60}")
+        print(f"PROCESSING COMPLETE")
+        print(f"{'='*60}")
+        print(f"Total files processed: {total_processed}/{total_files}")
+        print(f"Success rate: {(completed/total_processed)*100:.1f}%" if total_processed > 0 else "Success rate: 0%")
+        print(f"")
+        print(f"Results breakdown:")
+        print(f"  ✓ Successful OCR: {completed} images")
+        print(f"  👁 Visually illegible: {illegible} images") 
+        print(f"  🧠 Semantically invalid: {semantic_invalid} images")
+        print(f"  ❌ Error images: {errors} images")
+        print(f"")
+        print(f"Files generated:")
+        print(f"  📊 Progress log: {progress_file}")
+        print(f"  📄 Final output: {final_output_file}")
+        
+        if files_processed_this_session > 0:
+            print(f"")
+            print(f"This session processed: {files_processed_this_session} new files")
         
         return str(final_output_file)
