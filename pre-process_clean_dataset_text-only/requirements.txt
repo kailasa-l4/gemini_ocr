@@ -1,5 +1,0 @@
-google-generativeai>=0.7.0
-pdf2image>=1.16.3
-Pillow>=9.4.0
-rich>=13.3.5
-pathlib>=1.0.1
