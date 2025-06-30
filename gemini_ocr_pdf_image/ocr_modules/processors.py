@@ -2,8 +2,8 @@
 Document processors for PDF files, single images, and image directories.
 """
 
-import os
 import time
+import traceback
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -14,6 +14,7 @@ import fitz  # PyMuPDF
 from .models import PageProgress, ImageProgress
 from .progress_manager import ProgressManager
 from .ocr_engine import GeminiOCREngine
+from .document import PDFHandler, ImageHandler, ContentAggregator
 from .utils import find_image_files, get_safe_filename
 
 
@@ -25,10 +26,13 @@ class PDFProcessor:
         self.db_logger = db_logger
         self.logs_dir = logs_dir
         self.progress_manager = ProgressManager(db_logger=db_logger, logs_dir=logs_dir)
+        self.pdf_handler = PDFHandler()
+        self.content_aggregator = ContentAggregator()
     
     def process_pdf(self, pdf_path: str, output_dir: str, start_page: int = 1, 
                     end_page: Optional[int] = None, dpi: int = 300, 
-                    legibility_threshold: float = 0.5, semantic_threshold: float = 0.6) -> str:
+                    legibility_threshold: float = 0.5, semantic_threshold: float = 0.6,
+                    file_progress: Optional[tuple] = None) -> str:
         """
         Process a PDF file with enhanced OCR and legibility detection.
         
@@ -105,27 +109,36 @@ class PDFProcessor:
         # Initialize final output file (only if starting fresh)
         if not final_output_file.exists():
             print(f"Initializing output file: {final_output_file}")
-            with open(final_output_file, 'w', encoding='utf-8') as f:
-                f.write(f"# {book_name}\n\n")
+            self.content_aggregator.initialize_output_file(final_output_file, book_name)
         else:
             print(f"Resuming with existing output file: {final_output_file}")
         
+        # Create file progress context for display
+        file_context = ""
+        if file_progress:
+            file_idx, total_files = file_progress
+            file_context = f"File {file_idx}/{total_files} - "
+        
         # Process pages with incremental saving
+        progress_desc = f"{file_context}Pages"
         with tqdm(total=num_pages, initial=completed_pages, 
-                  desc=f"Processing pages ({remaining_pages} remaining)", unit="page") as pbar:
+                  desc=progress_desc, unit="page", ncols=100) as pbar:
             pages_processed_this_session = 0
             for i in pages_to_process:
                 page_num = i + 1  # Convert to 1-based
+                current_remaining = remaining_pages - pages_processed_this_session
                 
                 # Check if already processed  
                 if page_num in progress and progress[page_num].status == 'completed':
                     pbar.update(1)
-                    pbar.set_description(f"Skipping completed page {page_num}")
+                    # Keep description stable for completed pages
                     continue
                 
                 try:
+                    # Use stable description - tqdm will show current progress automatically
+                    pbar.set_description(f"Processing pages ({current_remaining} remaining)")
+                    
                     # Render page as image
-                    pbar.set_description(f"Rendering page {page_num}")
                     page = doc[i]
                     pix = page.get_pixmap(matrix=fitz.Matrix(dpi/72, dpi/72))
                     
@@ -134,7 +147,6 @@ class PDFProcessor:
                     img = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
                     
                     # Step 1: Combined pre-assessment (legibility + semantic prediction)
-                    pbar.set_description(f"Pre-assessing page {page_num}")
                     assessment_result = self.ocr_engine.combined_pre_assessment(
                         img, page_num, legibility_threshold, semantic_threshold
                     )
@@ -145,7 +157,6 @@ class PDFProcessor:
                     
                     if assessment_result.should_process:
                         # Step 2: Extract text (only if pre-assessment passed)
-                        pbar.set_description(f"Extracting text page {page_num}")
                         ocr_result = self.ocr_engine.extract_text(img, page_num)
                         
                         # Use raw OCR text directly (no cleaning)
@@ -153,12 +164,8 @@ class PDFProcessor:
                         ocr_confidence = ocr_result.confidence
                         status = 'completed'
                         
-                        # Immediately append to final file
-                        pbar.set_description(f"Saving page {page_num}")
-                        with open(final_output_file, 'a', encoding='utf-8') as f:
-                            f.write(f"## Page {page_num}\n\n")
-                            f.write(page_content)
-                            f.write("\n\n---\n\n")
+                        # Immediately append to final file using content aggregator
+                        self.content_aggregator.append_page_content(final_output_file, page_num, page_content)
                         
                     else:
                         # Don't create MD file for failed assessments - details are in CSV
@@ -216,22 +223,22 @@ class PDFProcessor:
                     
                     pbar.update(1)
                     pages_processed_this_session += 1
-                    current_remaining = remaining_pages - pages_processed_this_session
-                    pbar.set_description(f"Processing pages ({current_remaining} remaining)")
+                    
+                    # Update description with current page info (less frequently to avoid flicker)
+                    if pages_processed_this_session % 5 == 0 or (remaining_pages - pages_processed_this_session) <= 3:
+                        current_remaining = remaining_pages - pages_processed_this_session
+                        pbar.set_description(f"{file_context}Pages ({current_remaining} remaining)")
                     
                     # Rate limiting
                     time.sleep(1)
                     
                 except Exception as e:
                     error_msg = f"Error processing page {page_num}: {str(e)}"
-                    print(f"\n{error_msg}")
+                    # Use tqdm.write for error messages to avoid interfering with progress bar
+                    pbar.write(f"\n{error_msg}")
                     
-                    # Immediately append error to final file
-                    error_content = f"Error processing page {page_num}:\n\n{error_msg}"
-                    with open(final_output_file, 'a', encoding='utf-8') as f:
-                        f.write(f"## Page {page_num} (Error)\n\n")
-                        f.write(error_content)
-                        f.write("\n\n---\n\n")
+                    # Immediately append error to final file using content aggregator
+                    self.content_aggregator.append_error_content(final_output_file, page_num, error_msg)
                     
                     error_page_progress = PageProgress(
                         page_num=page_num,
@@ -278,8 +285,11 @@ class PDFProcessor:
                     
                     pbar.update(1)
                     pages_processed_this_session += 1
-                    current_remaining = remaining_pages - pages_processed_this_session
-                    pbar.set_description(f"Processing pages ({current_remaining} remaining)")
+                    
+                    # Update description with current page info (less frequently to avoid flicker)
+                    if pages_processed_this_session % 5 == 0 or (remaining_pages - pages_processed_this_session) <= 3:
+                        current_remaining = remaining_pages - pages_processed_this_session
+                        pbar.set_description(f"{file_context}Pages ({current_remaining} remaining)")
         
         doc.close()
         
@@ -333,6 +343,8 @@ class ImageProcessor:
         self.db_logger = db_logger
         self.logs_dir = logs_dir
         self.progress_manager = ProgressManager(db_logger=db_logger, logs_dir=logs_dir)
+        self.image_handler = ImageHandler()
+        self.content_aggregator = ContentAggregator()
     
     def process_single_image(self, image_path: str, output_dir: str, 
                            legibility_threshold: float = 0.5, semantic_threshold: float = 0.6) -> str:
@@ -509,6 +521,8 @@ class ImageDirectoryProcessor:
         self.db_logger = db_logger
         self.logs_dir = logs_dir
         self.progress_manager = ProgressManager(db_logger=db_logger, logs_dir=logs_dir)
+        self.image_handler = ImageHandler()
+        self.content_aggregator = ContentAggregator()
     
     def process_images(self, input_dir: str, output_dir: str, 
                       legibility_threshold: float = 0.5, semantic_threshold: float = 0.6) -> str:
@@ -565,20 +579,22 @@ class ImageDirectoryProcessor:
         all_content = {}
         
         with tqdm(total=len(image_files), initial=completed_count, 
-                  desc=f"Processing images ({remaining_count} remaining)", unit="image") as pbar:
+                  desc=f"Processing images", unit="image") as pbar:
             files_processed_this_session = 0
             for idx, (file_path, relative_path) in enumerate(image_files, 1):
+                current_remaining = remaining_count - files_processed_this_session
                 
                 # Check if already processed
                 if relative_path in progress and progress[relative_path].status == 'completed':
                     pbar.update(1)
-                    pbar.set_description(f"Skipping completed: {Path(relative_path).name}")
                     # Note: Content will be loaded later during final file generation
                     continue
                 
                 try:
+                    # Use stable description - tqdm shows progress automatically
+                    pbar.set_description(f"Processing images ({current_remaining} remaining)")
+                    
                     # Load image
-                    pbar.set_description(f"Loading: {Path(relative_path).name}")
                     img = Image.open(file_path)
                     
                     # Convert to RGB if necessary
@@ -586,7 +602,6 @@ class ImageDirectoryProcessor:
                         img = img.convert('RGB')
                     
                     # Step 1: Combined pre-assessment
-                    pbar.set_description(f"Pre-assessing: {Path(relative_path).name}")
                     assessment_result = self.ocr_engine.combined_pre_assessment(
                         img, idx, legibility_threshold, semantic_threshold
                     )
@@ -599,7 +614,6 @@ class ImageDirectoryProcessor:
                     if assessment_result.should_process:
                         try:
                             # Step 2: Extract text (only if pre-assessment passed)
-                            pbar.set_description(f"Extracting text: {Path(relative_path).name}")
                             ocr_result = self.ocr_engine.extract_text(img, idx)
                             
                             # Use raw OCR text directly (no cleaning)

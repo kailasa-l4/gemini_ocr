@@ -41,6 +41,12 @@ def load_env_config():
     # Load all possible environment variables
     if os.getenv('GEMINI_API_KEY'):
         config['api_key'] = os.getenv('GEMINI_API_KEY')
+    
+    # Model configuration
+    if os.getenv('GEMINI_ASSESSMENT_MODEL'):
+        config['gemini_assessment_model'] = os.getenv('GEMINI_ASSESSMENT_MODEL')
+    if os.getenv('GEMINI_OCR_MODEL'):
+        config['gemini_ocr_model'] = os.getenv('GEMINI_OCR_MODEL')
     if os.getenv('INPUT_FILE'):
         config['input_file'] = os.getenv('INPUT_FILE')
     if os.getenv('INPUT_DIR'):
@@ -77,8 +83,6 @@ def load_env_config():
     # Logging directory configuration
     if os.getenv('LOGS_DIR'):
         config['logs_dir'] = os.getenv('LOGS_DIR')
-    if os.getenv('CSV_LOGS_DIR'):
-        config['csv_logs_dir'] = os.getenv('CSV_LOGS_DIR')
     
     return config
 
@@ -137,6 +141,8 @@ def main():
     parser.add_argument("--enable-thinking-ocr", action="store_true", 
                        default=env_config.get('enable_thinking_ocr', False),
                        help="Enable thinking for OCR extraction phase")
+    parser.add_argument("--verbose", action="store_true", 
+                       help="Enable verbose output (show detailed OCR information)")
     
     # Database logging options
     parser.add_argument("--enable-database-logging", action="store_true", 
@@ -196,8 +202,29 @@ def main():
         enable_thinking_assessment=args.enable_thinking_assessment,
         enable_thinking_ocr=args.enable_thinking_ocr,
         db_logger=db_logger,
-        logs_dir=env_config.get('logs_dir', './logs')
+        logs_dir=env_config.get('logs_dir', './logs'),
+        verbose=args.verbose
     )
+    
+    # Set model configurations from environment
+    assessment_model = env_config.get('gemini_assessment_model', 'gemini-2.5-flash')
+    ocr_model = env_config.get('gemini_ocr_model', 'gemini-2.5-flash')
+    
+    if env_config.get('gemini_assessment_model'):
+        if args.verbose:
+            print(f"Using assessment model: {assessment_model}")
+        ocr.assessment_model = assessment_model
+        ocr.ocr_engine.assessment_model = assessment_model
+        # Update assessment services with new model
+        ocr.ocr_engine.legibility_assessor.model = assessment_model
+        ocr.ocr_engine.semantic_validator.model = assessment_model
+        ocr.ocr_engine.combined_assessor.model = assessment_model
+    
+    if env_config.get('gemini_ocr_model'):
+        if args.verbose:
+            print(f"Using OCR model: {ocr_model}")
+        ocr.ocr_model = ocr_model
+        ocr.ocr_engine.ocr_model = ocr_model
     
     # Process based on input type
     if args.input_file:
@@ -245,10 +272,11 @@ def main():
         print(f"Found {len(pdf_files)} PDF files and {len(image_files)} image files")
         
         result_files = []
+        total_files = len(pdf_files) + (1 if image_files else 0)
         
-        # Process each PDF individually
-        for pdf_file in pdf_files:
-            print(f"\n{'='*60}\nProcessing PDF: {pdf_file}\n{'='*60}")
+        # Process each PDF individually with file progress
+        for file_idx, pdf_file in enumerate(pdf_files, 1):
+            print(f"\n{'='*60}\nProcessing PDF {file_idx}/{len(pdf_files)}: {pdf_file}\n{'='*60}")
             result_file = ocr.process_pdf(
                 pdf_file,
                 args.output_dir,
@@ -256,7 +284,8 @@ def main():
                 args.end_page,
                 args.dpi,
                 args.legibility_threshold,
-                args.semantic_threshold
+                args.semantic_threshold,
+                file_progress=(file_idx, len(pdf_files))
             )
             if result_file:
                 result_files.append(result_file)

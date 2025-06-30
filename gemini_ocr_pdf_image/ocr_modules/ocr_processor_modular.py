@@ -14,16 +14,21 @@ class GeminiAdvancedOCR:
     
     def __init__(self, api_key: str, thinking_budget: int = 2000, 
                  enable_thinking_assessment: bool = True, enable_thinking_ocr: bool = False,
-                 db_logger=None, logs_dir: str = './logs'):
+                 db_logger=None, logs_dir: str = './logs', verbose: bool = False):
         """Initialize the modular OCR processor."""
         # Store database logger and logs directory
         self.db_logger = db_logger
         self.logs_dir = logs_dir
         
+        # Store model configurations
+        self.assessment_model = 'gemini-2.5-flash'  # Default
+        self.ocr_model = 'gemini-2.5-flash'  # Default
+        
         # Initialize the OCR engine
         self.ocr_engine = GeminiOCREngine(
             api_key, thinking_budget, enable_thinking_assessment, enable_thinking_ocr,
-            db_logger=db_logger, logs_dir=logs_dir
+            db_logger=db_logger, logs_dir=logs_dir, verbose=verbose,
+            assessment_model=self.assessment_model, ocr_model=self.ocr_model
         )
         
         # Initialize processors
@@ -51,11 +56,11 @@ class GeminiAdvancedOCR:
     
     # Delegate methods to processors
     def process_pdf(self, pdf_path, output_dir, start_page=1, end_page=None, dpi=300, 
-                    legibility_threshold=0.5, semantic_threshold=0.6):
+                    legibility_threshold=0.5, semantic_threshold=0.6, file_progress=None):
         """Process a PDF file."""
         return self.pdf_processor.process_pdf(
             pdf_path, output_dir, start_page, end_page, dpi, 
-            legibility_threshold, semantic_threshold
+            legibility_threshold, semantic_threshold, file_progress=file_progress
         )
     
     def process_single_image(self, image_path, output_dir, legibility_threshold=0.5, 

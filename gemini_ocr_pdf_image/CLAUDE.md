@@ -147,7 +147,12 @@ Create a `.env` file in the project root with your configuration:
 # Required
 GEMINI_API_KEY=your_gemini_api_key_here
 
-# Optional processing parameters
+# Gemini Models Configuration
+# Use different models for assessment vs OCR extraction phases
+GEMINI_ASSESSMENT_MODEL=gemini-2.5-flash
+GEMINI_OCR_MODEL=gemini-2.5-flash
+
+# Processing parameters
 LEGIBILITY_THRESHOLD=0.5
 SEMANTIC_THRESHOLD=0.6
 THINKING_BUDGET=2000
@@ -159,18 +164,15 @@ DATABASE_URL=postgresql://ocr:rmtetn5qek6zikol@157.180.15.165:1111/db
 DATABASE_CONNECTION_TIMEOUT=30
 DATABASE_RETRY_ATTEMPTS=3
 
-# Optional logging configuration
-LOGS_DIR=./logs
-CSV_LOGS_DIR=./logs
-
-# Optional paths (can be overridden by CLI)
-OUTPUT_DIR=./output
-# INPUT_FILE=path/to/file.pdf
-# INPUT_DIR=path/to/images
-
-# Optional thinking configuration
+# Thinking configuration (true/false)
 ENABLE_THINKING_ASSESSMENT=true
 ENABLE_THINKING_OCR=false
+
+# Output directory (input paths should be specified via CLI)
+OUTPUT_DIR=./output
+
+# Logging directory
+LOGS_DIR=./logs
 ```
 
 #### Usage Examples
@@ -184,8 +186,34 @@ python ocr_book_processor.py --input-dir ./documents
 # Override .env settings with CLI arguments
 python ocr_book_processor.py --input-file document.png --legibility-threshold 0.7
 
+# Enable verbose output for detailed OCR information
+python ocr_book_processor.py --input-file book.pdf --verbose
+
 # Traditional CLI-only approach (still supported)
 python ocr_book_processor.py --input-file book.pdf --output-dir ./output --api-key YOUR_KEY
+```
+
+#### Model Configuration Examples
+
+**Same model for both phases (default):**
+```bash
+GEMINI_ASSESSMENT_MODEL=gemini-2.5-flash
+GEMINI_OCR_MODEL=gemini-2.5-flash
+```
+
+**Optimized for cost and performance:**
+```bash
+# Use faster/cheaper model for pre-assessment
+GEMINI_ASSESSMENT_MODEL=gemini-1.5-flash
+# Use more powerful model for actual OCR extraction
+GEMINI_OCR_MODEL=gemini-2.5-flash
+```
+
+**Maximum performance:**
+```bash
+# Use most powerful models for both phases
+GEMINI_ASSESSMENT_MODEL=gemini-2.5-flash
+GEMINI_OCR_MODEL=gemini-2.5-flash
 ```
 
 #### Progress Display Examples
@@ -232,13 +260,14 @@ This session processed: 510 new files
 - `--thinking-budget`: Token budget for Gemini's reasoning process (default: 2000)
 - `--enable-thinking-assessment`: Enable thinking for assessment phase (default: true)
 - `--enable-thinking-ocr`: Enable thinking for OCR extraction phase (default: false)
+- `--verbose`: Enable verbose output showing detailed OCR information (default: false)
 - `--dpi`: Resolution for PDF page rendering (default: 300)
 
 ## Configuration
 
 ### Environment Requirements
 - Google Gemini API key required
-- Uses `gemini-2.5-flash-preview-05-20` model
+- Uses `gemini-2.5-flash` model
 - Requires Python 3.12+
 
 ### Dependencies
@@ -460,3 +489,227 @@ The tool includes specific text replacement rules applied during OCR extraction:
 - Replace "India" → "Bharat", "Indian" → "Hindu"
 - Remove contact information, book metadata, and statistics during extraction
 - Preserve Sanskrit diacritical marks and formatting
+
+# Code Modularization Plan
+
+## Current Problems Identified
+
+The codebase has good modular foundations but two critical files need major refactoring:
+
+### Critical Issues
+- **`ocr_engine.py` (1057 lines)** - Violating Single Responsibility Principle
+  - API client management
+  - Logging setup and management  
+  - Combined pre-assessment (300+ line method)
+  - Legibility assessment
+  - OCR text extraction (300+ line method with complex prompts)
+  - Semantic validation
+  - JSON error recovery (5 different recovery methods)
+  - Database logging integration
+  - Retry logic and error handling
+
+- **`processors.py` (779 lines)** - Also violating Single Responsibility Principle
+  - PDF rendering and page extraction
+  - Progress tracking integration
+  - File I/O operations
+  - Database session management
+  - Content aggregation and markdown generation
+  - Error handling and recovery
+  - Progress reporting and statistics
+
+### Problems with Current Architecture
+- **Large, Complex Methods**: Some methods are 200-300 lines long with complex logic
+- **Tight Coupling**: Components are hard to test and modify independently
+- **Mixed Responsibilities**: Business logic mixed with infrastructure concerns
+- **Hard to Maintain**: Changes require understanding multiple interconnected systems
+
+## Refactoring Strategy
+
+### Phase 1: Extract Core Services (High Priority - Start Here)
+
+#### 1.1 API Client Service
+**New file: `ocr_modules/api/gemini_client.py` (~150 lines)**
+- Extract API configuration and client management from OCR engine
+- Handle rate limiting and retries
+- Manage response parsing and error handling
+- Focus solely on API communication
+
+#### 1.2 Prompt Template Service  
+**New file: `ocr_modules/prompts/template_manager.py` (~200 lines)**
+- Extract all hardcoded prompt templates from OCR engine
+- Provide template rendering with parameters
+- Support different prompt types (assessment, OCR, semantic)
+- Enable easy prompt customization and A/B testing
+
+#### 1.3 JSON Recovery Service
+**New file: `ocr_modules/utils/json_recovery.py` (~200 lines)**
+- Extract all 5 JSON recovery methods from OCR engine
+- Provide centralized malformed JSON handling
+- Support different recovery strategies
+- Focus on JSON parsing and repair
+
+### Phase 2: Redesign Core Engine (High Priority)
+
+#### 2.1 Specialized Assessment Engines
+**New files:**
+- `ocr_modules/assessment/legibility_assessor.py` (~150 lines)
+- `ocr_modules/assessment/semantic_validator.py` (~150 lines) 
+- `ocr_modules/assessment/combined_assessor.py` (~100 lines)
+
+Each focuses on one assessment type with clean interfaces.
+
+#### 2.2 Refactored OCR Engine
+**Updated: `ocr_modules/ocr_engine.py`** 
+- Reduce from 1057 to ~300 lines
+- Focus solely on OCR text extraction orchestration
+- Use dependency injection for services
+- Clean separation of concerns
+
+### Phase 3: Processor Refactoring (COMPLETED ✅)
+
+#### 3.1 Document Handler Services (COMPLETED ✅)
+**New files created:**
+- `ocr_modules/document/pdf_handler.py` (177 lines) - PDF operations with context manager support
+- `ocr_modules/document/image_handler.py` (150 lines) - Image loading, validation, and directory scanning
+- `ocr_modules/document/content_aggregator.py` (150 lines) - Content aggregation and output formatting
+
+#### 3.2 Processors Integration (COMPLETED ✅)  
+**Updated: `ocr_modules/processors.py`**
+- Integrated PDFHandler, ImageHandler, and ContentAggregator into all processor classes
+- Refactored PDF processing to use document handler services
+- Maintained backward compatibility while introducing cleaner service interfaces
+- Demonstrated modular pattern for further processor refactoring
+
+### Phase 4: Configuration & Pipeline (Medium Priority)
+
+#### 4.1 Configuration Management
+**New file: `ocr_modules/config/settings.py`**
+- Centralize all configuration parameters
+- Support environment-based configs
+- Validate configuration on startup
+
+#### 4.2 Processing Pipeline
+**New file: `ocr_modules/pipeline/processor_pipeline.py`**
+- Define clear processing stages
+- Support middleware/hooks for customization
+- Enable different processing strategies
+
+### Phase 5: Enhanced Error Handling (Lower Priority)
+
+#### 5.1 Error Handler Service
+**New file: `ocr_modules/errors/error_handler.py`**
+- Centralized error handling strategies
+- Structured error reporting
+- Integration with database logging
+
+## Expected Benefits
+
+### Maintainability Improvements
+- **Reduced Complexity**: Largest files go from 1000+ lines to <300 lines
+- **Clear Responsibilities**: Each class has single, well-defined purpose
+- **Easier Testing**: Individual components can be unit tested in isolation
+- **Better Documentation**: Focused modules are easier to document
+
+### Development Efficiency  
+- **Parallel Development**: Different developers can work on different services
+- **Easier Debugging**: Issues isolated to specific, focused modules
+- **Safer Refactoring**: Changes contained within service boundaries
+- **Plugin Architecture**: Easy to swap implementations (e.g., different LLM providers)
+
+### Code Quality
+- **Separation of Concerns**: Business logic separated from infrastructure
+- **Dependency Injection**: Clean, testable interfaces
+- **Configuration Management**: Centralized, validated settings
+- **Error Handling**: Consistent, structured error management
+
+## Implementation Strategy
+
+1. **Start with utilities** (Phase 1) - lowest risk, immediate benefits
+2. **Refactor engine core** (Phase 2) - highest impact on maintainability  
+3. **Update processors** (Phase 3) - builds on engine improvements
+4. **Add configuration** (Phase 4) - enables better customization
+5. **Enhance error handling** (Phase 5) - polish and robustness
+
+Each phase maintains backward compatibility through the existing `GeminiAdvancedOCR` facade class.
+
+## Current Implementation Status
+
+### ✅ Completed
+- Initial codebase analysis and modularization plan documentation
+- **Phase 1: Core services extraction** ✅
+  - ✅ API Client Service (`ocr_modules/api/gemini_client.py`) - 150+ lines
+  - ✅ Prompt Template Service (`ocr_modules/prompts/template_manager.py`) - 200+ lines  
+  - ✅ JSON Recovery Service (`ocr_modules/utils/json_recovery.py`) - 200+ lines
+  - ✅ Refactored OCR Engine - Reduced from 1057 to 411 lines (61% reduction)
+  - ✅ All services integrated with dependency injection
+  - ✅ Backward compatibility maintained through existing interfaces
+- **Phase 2: Assessment engine specialization** ✅
+  - ✅ Legibility Assessor (`ocr_modules/assessment/legibility_assessor.py`) - 95+ lines
+  - ✅ Semantic Validator (`ocr_modules/assessment/semantic_validator.py`) - 95+ lines
+  - ✅ Combined Assessor (`ocr_modules/assessment/combined_assessor.py`) - 130+ lines
+  - ✅ OCR Engine further reduced from 411 to 206 lines (50% additional reduction)
+  - ✅ Total reduction: 1057 → 206 lines (80% reduction!)
+
+- **Phase 3: Document handler services** ✅
+  - ✅ PDF Handler (`ocr_modules/document/pdf_handler.py`) - 177 lines
+  - ✅ Image Handler (`ocr_modules/document/image_handler.py`) - 150 lines
+  - ✅ Content Aggregator (`ocr_modules/document/content_aggregator.py`) - 150 lines
+  - ✅ Processor classes integrated with document handlers
+  - ✅ Demonstrated modular pattern with PDF processing refactoring
+
+### 🔄 In Progress  
+- Phase 4: Configuration management
+- Phase 5: Enhanced error handling
+
+### 🐛 Issues Resolved
+- ✅ **Import Resolution**: Fixed import conflicts when creating utils directory
+  - Moved all utility functions from `utils.py` into `utils/__init__.py`
+  - Maintained backward compatibility for all existing imports
+  - Resolved `ImportError: cannot import name 'find_image_files'` and similar issues
+
+### ⏳ Planned
+- Phase 2: Complete engine redesign
+- Phase 3: Processor refactoring  
+- Phase 4: Configuration management
+- Phase 5: Error handling enhancement
+
+## Modularization Results Summary
+
+### Phase 1 + 2 Combined Results
+
+**Spectacular Code Reduction:**
+- `ocr_engine.py`: **1057 → 206 lines (80% reduction, -851 lines)**
+- Phase 1: 1057 → 411 lines (61% reduction)
+- Phase 2: 411 → 206 lines (50% additional reduction)
+- Extracted 850+ lines into focused, specialized services
+
+**New Modular Architecture Created:**
+
+**Core Services (Phase 1):**
+1. **GeminiAPIClient**: Handles all API communication, retries, and validation (~150 lines)
+2. **PromptTemplateManager**: Centralizes all prompt templates for easy customization (~200 lines)  
+3. **JSONRecoveryService**: Provides robust JSON parsing with multiple recovery strategies (~200 lines)
+
+**Assessment Services (Phase 2):**
+4. **LegibilityAssessor**: Specialized visual legibility assessment (~95 lines)
+5. **SemanticValidator**: Focused semantic meaning validation (~95 lines)
+6. **CombinedAssessor**: Integrated pre-assessment logic (~130 lines)
+
+**Architectural Benefits Achieved:**
+- **Single Responsibility**: Each service has one clear, focused purpose
+- **Testability**: All services can be unit tested independently  
+- **Maintainability**: Easy to understand, modify, and extend individual components
+- **Flexibility**: Simple to swap implementations or customize behavior
+- **Debugging**: Issues are isolated to specific, focused modules
+- **Code Reuse**: Services can be reused across different components
+- **Dependency Injection**: Clean interfaces with no tight coupling
+- **Backward Compatibility**: All existing interfaces continue to work seamlessly
+
+**Current OCR Engine Focus:**
+The OCR engine now focuses solely on:
+- Service orchestration and coordination
+- Text extraction using the OCR API
+- Error handling and logging
+- Legacy method delegation to specialized services
+
+All complex assessment logic has been extracted into specialized, focused services.
