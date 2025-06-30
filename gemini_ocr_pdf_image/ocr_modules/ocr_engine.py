@@ -39,7 +39,7 @@ class GeminiOCREngine:
         self.model_config = types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=None,  # Will be set per request
-            max_output_tokens=4000,
+            max_output_tokens=6000,  # Increased from 4000 to handle larger tables
             temperature=0.1
         )
         
@@ -395,7 +395,7 @@ class GeminiOCREngine:
             config = types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_schema=APISchemas.get_ocr_schema(),
-                max_output_tokens=4000,
+                max_output_tokens=6000,  # Increased to handle larger tables
                 temperature=0.1
             )
             
@@ -544,7 +544,27 @@ class GeminiOCREngine:
                 error_msg = f"JSON parsing error in OCR extraction for page {page_num}: {str(je)}"
                 print(f"Error: {error_msg}")
                 print(f"Problematic response text: {text_content[:500]}...")
-                raise Exception(error_msg)
+                
+                # Attempt JSON repair and recovery
+                self.logger.warning(f"Attempting JSON repair for page {page_num}")
+                recovered_data = self._attempt_json_recovery(text_content, page_num)
+                
+                if recovered_data:
+                    self.logger.info(f"JSON recovery successful for page {page_num}")
+                    print(f"JSON recovery successful for page {page_num}")
+                    result_data = recovered_data
+                else:
+                    # If recovery fails, try a simplified retry
+                    self.logger.warning(f"JSON recovery failed, attempting simplified extraction for page {page_num}")
+                    try:
+                        simplified_result = self._retry_with_simplified_prompt(image, page_num)
+                        if simplified_result:
+                            return simplified_result
+                    except Exception as retry_e:
+                        self.logger.error(f"Simplified retry also failed for page {page_num}: {str(retry_e)}")
+                    
+                    # Final fallback - raise the original error
+                    raise Exception(error_msg)
             
             processing_time = time.time() - start_time
             
@@ -789,4 +809,249 @@ class GeminiOCREngine:
                 reason=f"Error during semantic validation: {str(e)}",
                 processing_time=processing_time
             )
+    
+    def _attempt_json_recovery(self, malformed_json: str, page_num: int) -> dict:
+        """
+        Attempt to recover usable data from malformed JSON responses.
+        
+        Args:
+            malformed_json: The malformed JSON string from Gemini
+            page_num: Page number for logging
+            
+        Returns:
+            Recovered dictionary or None if recovery fails
+        """
+        import re
+        
+        self.logger.debug(f"Attempting JSON recovery for page {page_num}")
+        
+        # Strategy 1: Try to repair common JSON issues
+        recovery_strategies = [
+            self._repair_truncated_json,
+            self._repair_unescaped_quotes,
+            self._extract_content_with_regex,
+            self._extract_partial_content
+        ]
+        
+        for strategy_num, strategy in enumerate(recovery_strategies, 1):
+            try:
+                self.logger.debug(f"Trying recovery strategy {strategy_num} for page {page_num}")
+                result = strategy(malformed_json, page_num)
+                if result:
+                    self.logger.info(f"Recovery strategy {strategy_num} succeeded for page {page_num}")
+                    return result
+            except Exception as e:
+                self.logger.debug(f"Recovery strategy {strategy_num} failed for page {page_num}: {str(e)}")
+                continue
+        
+        self.logger.warning(f"All JSON recovery strategies failed for page {page_num}")
+        return None
+    
+    def _repair_truncated_json(self, json_str: str, page_num: int) -> dict:
+        """Attempt to repair JSON that was truncated mid-string."""
+        import json
+        
+        # Check if JSON ends abruptly in a string
+        if json_str.rstrip().endswith('...') or not json_str.rstrip().endswith('}'):
+            self.logger.debug(f"Detected truncated JSON for page {page_num}")
+            
+            # Find the last complete field before truncation
+            lines = json_str.split('\n')
+            repaired_lines = []
+            in_string = False
+            
+            for line in lines:
+                # If we hit an incomplete string, try to close it
+                if '"extracted_text":' in line and not line.rstrip().endswith('"'):
+                    # Find the opening quote and close the string
+                    if '": "' in line:
+                        parts = line.split('": "', 1)
+                        if len(parts) == 2:
+                            # Close the string and add remaining required fields
+                            repaired_lines.append(parts[0] + '": "' + parts[1].rstrip() + '"')
+                            break
+                else:
+                    repaired_lines.append(line)
+            
+            # Add missing required fields if needed
+            repaired_json = '\n'.join(repaired_lines)
+            if not repaired_json.rstrip().endswith('}'):
+                repaired_json = repaired_json.rstrip() + ',\n  "confidence": 0.7,\n  "language_detected": "English"\n}'
+            
+            try:
+                return json.loads(repaired_json)
+            except json.JSONDecodeError:
+                pass
+        
+        return None
+    
+    def _repair_unescaped_quotes(self, json_str: str, page_num: int) -> dict:
+        """Attempt to repair JSON with unescaped quotes in strings."""
+        import json
+        import re
+        
+        # Replace unescaped quotes within string values
+        # This is a simple heuristic - look for quotes between ": " and ",
+        pattern = r'(": ")([^"]*)"([^"]*")([^"]*")([^",}]*)(["|}])'
+        
+        def escape_quotes(match):
+            prefix = match.group(1)
+            content = (match.group(2) + '\\"' + match.group(3) + '\\"' + match.group(4) + '\\"' + match.group(5))
+            suffix = match.group(6)
+            return prefix + content + suffix
+        
+        repaired = re.sub(pattern, escape_quotes, json_str)
+        
+        try:
+            return json.loads(repaired)
+        except json.JSONDecodeError:
+            return None
+    
+    def _extract_content_with_regex(self, json_str: str, page_num: int) -> dict:
+        """Extract content using regex when JSON parsing fails completely."""
+        import re
+        
+        # Try to extract the main content even if JSON is malformed
+        extracted_text = ""
+        confidence = 0.5  # Default for recovered content
+        language = "English"  # Default
+        
+        # Extract text content from extracted_text field
+        text_match = re.search(r'"extracted_text":\s*"([^"]*(?:\\"[^"]*)*)', json_str, re.DOTALL)
+        if text_match:
+            extracted_text = text_match.group(1).replace('\\"', '"')
+        
+        # Extract confidence if available
+        conf_match = re.search(r'"confidence":\s*([0-9.]+)', json_str)
+        if conf_match:
+            confidence = float(conf_match.group(1))
+        
+        # Extract language if available
+        lang_match = re.search(r'"language_detected":\s*"([^"]+)"', json_str)
+        if lang_match:
+            language = lang_match.group(1)
+        
+        if extracted_text:
+            self.logger.info(f"Extracted content via regex for page {page_num}: {len(extracted_text)} characters")
+            return {
+                "extracted_text": extracted_text,
+                "confidence": confidence,
+                "language_detected": language
+            }
+        
+        return None
+    
+    def _extract_partial_content(self, json_str: str, page_num: int) -> dict:
+        """Extract whatever content is available, even if incomplete."""
+        # As a last resort, try to extract any visible text content
+        # Look for content that appears to be extracted text
+        
+        lines = json_str.split('\n')
+        content_lines = []
+        capturing = False
+        
+        for line in lines:
+            if '"extracted_text":' in line:
+                capturing = True
+                # Extract content from this line if any
+                if '": "' in line:
+                    content_start = line.split('": "', 1)[1]
+                    content_lines.append(content_start.rstrip('"'))
+                continue
+            
+            if capturing:
+                # Stop if we hit another JSON field
+                if line.strip().startswith('"') and '":' in line:
+                    break
+                content_lines.append(line)
+        
+        if content_lines:
+            extracted_content = '\n'.join(content_lines).strip()
+            if extracted_content:
+                self.logger.info(f"Extracted partial content for page {page_num}: {len(extracted_content)} characters")
+                return {
+                    "extracted_text": extracted_content,
+                    "confidence": 0.4,  # Lower confidence for partial extraction
+                    "language_detected": "English"
+                }
+        
+        return None
+    
+    def _retry_with_simplified_prompt(self, image: Image.Image, page_num: int) -> OCRResult:
+        """
+        Retry OCR with a simplified prompt that's less likely to cause JSON issues.
+        
+        Args:
+            image: PIL Image to process
+            page_num: Page number for logging
+            
+        Returns:
+            OCRResult or None if retry fails
+        """
+        start_time = time.time()
+        
+        # Simplified prompt that's less likely to produce large responses
+        simplified_prompt = f"""
+        Extract the main text content from this image (Page {page_num}). 
+        
+        Focus on:
+        1. Main headings and titles
+        2. Primary text content
+        3. Key information
+        
+        Ignore:
+        - Large tables (just mention "Table with X columns")
+        - Detailed formatting
+        - Minor text elements
+        
+        Keep the response concise but capture the essential content.
+        """
+        
+        try:
+            # Use smaller token limit for simplified extraction
+            config = types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=APISchemas.get_ocr_schema(),
+                max_output_tokens=2000,  # Smaller limit
+                temperature=0.1
+            )
+            
+            # Convert PIL image to bytes for the API
+            img_bytes = io.BytesIO()
+            image.save(img_bytes, format='PNG')
+            img_bytes.seek(0)
+            
+            response = self.client.models.generate_content(
+                model='gemini-2.5-flash-preview-05-20',
+                contents=[
+                    simplified_prompt,
+                    types.Part.from_bytes(
+                        data=img_bytes.getvalue(), 
+                        mime_type='image/png'
+                    )
+                ],
+                config=config
+            )
+            
+            if response and response.text:
+                try:
+                    result_data = json.loads(response.text)
+                    processing_time = time.time() - start_time
+                    
+                    self.logger.info(f"Simplified retry successful for page {page_num}")
+                    print(f"Simplified retry successful for page {page_num}")
+                    
+                    return OCRResult(
+                        extracted_text=result_data.get('extracted_text', ''),
+                        confidence=result_data.get('confidence', 0.5),
+                        language_detected=result_data.get('language_detected', 'English'),
+                        processing_time=processing_time
+                    )
+                except json.JSONDecodeError:
+                    self.logger.warning(f"Simplified retry also produced malformed JSON for page {page_num}")
+            
+        except Exception as e:
+            self.logger.error(f"Simplified retry failed for page {page_num}: {str(e)}")
+        
+        return None
     
