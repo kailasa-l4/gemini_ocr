@@ -86,6 +86,54 @@ class GeminiAdvancedOCR:
         """Check if file is a supported image format."""
         return is_image_file(file_path)
     
+    def is_pdf_fully_completed(self, pdf_path, output_dir, start_page=1, end_page=None):
+        """
+        Fast check if a PDF file is already fully processed.
+        
+        Args:
+            pdf_path: Path to the PDF file
+            output_dir: Output directory
+            start_page: First page to check (1-based)
+            end_page: Last page to check (inclusive)
+            
+        Returns:
+            True if all pages are completed, False otherwise
+        """
+        import fitz
+        from pathlib import Path
+        
+        try:
+            # Get basic info about the PDF
+            doc = fitz.open(pdf_path)
+            total_pages = len(doc)
+            doc.close()
+            
+            # Adjust page range like in the processor
+            if start_page < 1:
+                start_page = 1
+            if end_page is None or end_page > total_pages:
+                end_page = total_pages
+                
+            num_pages = end_page - start_page + 1
+            
+            # Setup paths like in the processor
+            book_name = Path(pdf_path).stem
+            book_output_dir = Path(output_dir) / book_name
+            progress_file = book_output_dir / f"{book_name}_progress.csv"
+            
+            # Fast completion check using the optimized method
+            completion_status = self.pdf_processor.progress_manager.get_completion_status_fast(
+                str(progress_file), num_pages
+            )
+            
+            # Return True only if ALL pages are completed
+            return completion_status['remaining_count'] == 0
+            
+        except Exception as e:
+            # If any error occurs, assume not completed (safe default)
+            print(f"Warning: Could not check completion status for {pdf_path}: {e}")
+            return False
+    
     # Legacy progress methods (delegated to processors)
     def load_progress(self, progress_file):
         """Load page progress from CSV file."""

@@ -274,9 +274,20 @@ def main():
         result_files = []
         total_files = len(pdf_files) + (1 if image_files else 0)
         
-        # Process each PDF individually with file progress
+        # Process each PDF individually with file progress and fast completion check
         for file_idx, pdf_file in enumerate(pdf_files, 1):
             print(f"\n{'='*60}\nProcessing PDF {file_idx}/{len(pdf_files)}: {pdf_file}\n{'='*60}")
+            
+            # Fast completion check - skip if PDF is already fully processed
+            if ocr.is_pdf_fully_completed(pdf_file, args.output_dir, args.start_page, args.end_page):
+                print(f"✅ PDF already fully processed! Skipping to next file.")
+                # Still add to results since the file exists
+                book_name = os.path.splitext(os.path.basename(pdf_file))[0]
+                result_file = os.path.join(args.output_dir, book_name, f"{book_name}_processed.md")
+                if os.path.exists(result_file):
+                    result_files.append(result_file)
+                continue
+            
             result_file = ocr.process_pdf(
                 pdf_file,
                 args.output_dir,

@@ -71,10 +71,7 @@ class PDFProcessor:
         progress_file = book_output_dir / f"{book_name}_progress.csv"
         final_output_file = book_output_dir / f"{book_name}_processed.md"
         
-        # Load existing progress
-        progress = self.progress_manager.load_page_progress(str(progress_file))
-        
-        # Open PDF
+        # Open PDF to get total pages
         print(f"Opening PDF: {pdf_path}")
         doc = fitz.open(pdf_path)
         total_pages = len(doc)
@@ -89,11 +86,14 @@ class PDFProcessor:
         pages_to_process = range(start_page - 1, end_page)  # 0-based index
         num_pages = len(pages_to_process)
         
-        # Calculate progress summary
-        page_numbers = [i + 1 for i in pages_to_process]  # Convert to 1-based
-        completed_pages = sum(1 for page_num in page_numbers 
-                            if page_num in progress and progress[page_num].status == 'completed')
-        remaining_pages = num_pages - completed_pages
+        # Use fast resume method to get completion status
+        completion_status = self.progress_manager.get_completion_status_fast(
+            str(progress_file), num_pages
+        )
+        
+        completed_pages = completion_status['completed_count']
+        remaining_pages = completion_status['remaining_count']
+        completed_page_set = completion_status['completed_pages']
         
         print(f"Processing pages {start_page} to {end_page} ({num_pages} pages)")
         print(f"Progress: {completed_pages}/{num_pages} completed ({remaining_pages} remaining)")
@@ -101,10 +101,19 @@ class PDFProcessor:
         print(f"Legibility threshold: {legibility_threshold}")
         print(f"Semantic threshold: {semantic_threshold}")
         
-        if completed_pages > 0:
+        if completion_status['has_progress']:
             print(f"Resuming from previous session...")
+        
+        # Early exit for fully completed files
         if remaining_pages == 0:
             print("All pages already processed! Output file is up to date.")
+            doc.close()  # Clean up PDF resource
+            
+            # End database session if available
+            if self.db_logger and session_id:
+                self.db_logger.end_session(session_id, 'completed', completed_pages, 0)
+            
+            return str(final_output_file)
         
         # Initialize final output file (only if starting fresh)
         if not final_output_file.exists():
@@ -119,6 +128,9 @@ class PDFProcessor:
             file_idx, total_files = file_progress
             file_context = f"File {file_idx}/{total_files} - "
         
+        # Load full progress only if needed for processing (lazy loading)
+        progress = None
+        
         # Process pages with incremental saving
         progress_desc = f"{file_context}Pages"
         with tqdm(total=num_pages, initial=completed_pages, 
@@ -128,11 +140,15 @@ class PDFProcessor:
                 page_num = i + 1  # Convert to 1-based
                 current_remaining = remaining_pages - pages_processed_this_session
                 
-                # Check if already processed  
-                if page_num in progress and progress[page_num].status == 'completed':
+                # Fast check if already processed using the set  
+                if page_num in completed_page_set:
                     pbar.update(1)
                     # Keep description stable for completed pages
                     continue
+                
+                # Lazy load full progress only when we need to process a page
+                if progress is None:
+                    progress = self.progress_manager.load_page_progress(str(progress_file))
                 
                 try:
                     # Use stable description - tqdm will show current progress automatically
@@ -555,14 +571,15 @@ class ImageDirectoryProcessor:
         progress_file = output_dir_path / f"{dir_name}_images_progress.csv"
         final_output_file = output_dir_path / f"{dir_name}_images_processed.md"
         
-        # Load existing progress (using file path as key instead of page number)
-        progress = self.progress_manager.load_image_progress(str(progress_file))
-        
-        # Calculate progress summary
+        # Use fast resume method to get completion status
         total_files = len(image_files)
-        completed_count = sum(1 for _, relative_path in image_files 
-                            if relative_path in progress and progress[relative_path].status == 'completed')
-        remaining_count = total_files - completed_count
+        completion_status = self.progress_manager.get_image_completion_status_fast(
+            str(progress_file), total_files
+        )
+        
+        completed_count = completion_status['completed_count']
+        remaining_count = completion_status['remaining_count']
+        completed_file_set = completion_status['completed_files']
         
         print(f"Processing {total_files} images")
         print(f"Progress: {completed_count}/{total_files} completed ({remaining_count} remaining)")
@@ -570,13 +587,20 @@ class ImageDirectoryProcessor:
         print(f"Legibility threshold: {legibility_threshold}")
         print(f"Semantic threshold: {semantic_threshold}")
         
-        if completed_count > 0:
+        if completion_status['has_progress']:
             print(f"Resuming from previous session...")
+        
+        # Early exit for fully completed processing
         if remaining_count == 0:
             print("All images already processed! Generating final output file...")
+            # We still need to generate the final output file, so don't return early here
+            # but we can skip the processing loop entirely
         
         # Process images
         all_content = {}
+        
+        # Load full progress only if needed for processing (lazy loading)
+        progress = None
         
         with tqdm(total=len(image_files), initial=completed_count, 
                   desc=f"Processing images", unit="image") as pbar:
@@ -584,11 +608,15 @@ class ImageDirectoryProcessor:
             for idx, (file_path, relative_path) in enumerate(image_files, 1):
                 current_remaining = remaining_count - files_processed_this_session
                 
-                # Check if already processed
-                if relative_path in progress and progress[relative_path].status == 'completed':
+                # Fast check if already processed using the set
+                if relative_path in completed_file_set:
                     pbar.update(1)
                     # Note: Content will be loaded later during final file generation
                     continue
+                
+                # Lazy load full progress only when we need to process a file
+                if progress is None:
+                    progress = self.progress_manager.load_image_progress(str(progress_file))
                 
                 try:
                     # Use stable description - tqdm shows progress automatically

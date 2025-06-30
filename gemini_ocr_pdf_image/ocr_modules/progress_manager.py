@@ -149,13 +149,23 @@ class ProgressManager:
                 })
 
     def append_page_progress(self, page_progress: PageProgress, progress_file: str):
-        """Append a single page progress entry to CSV file (faster for real-time updates)."""
+        """Append a single page progress entry to CSV file, preventing duplicates."""
         csv_path = self._get_csv_path(progress_file)
         fieldnames = ['page_num', 'status', 'legibility_score', 'semantic_score', 'ocr_confidence', 
                      'processing_time', 'error_message', 'timestamp', 'text_clarity', 'image_quality',
                      'ocr_prediction', 'semantic_prediction', 'visible_text_sample', 'language_detected', 'issues_found']
         
-        # Check if file exists and needs header
+        # Check if this page already exists in progress file
+        if os.path.exists(csv_path):
+            existing_pages = self._get_deduplicated_page_status(progress_file)
+            if page_progress.page_num in existing_pages:
+                # Page already exists, use full rewrite to update it
+                all_progress = self.load_page_progress(progress_file)
+                all_progress[page_progress.page_num] = page_progress
+                self.save_page_progress(all_progress, progress_file)
+                return
+        
+        # Page doesn't exist yet, safe to append
         file_exists = os.path.exists(csv_path)
         
         try:
@@ -192,6 +202,156 @@ class ProgressManager:
             # Fallback to full rewrite if append fails
             print(f"Warning: Append failed ({e}), falling back to full progress save")
             # We'll need the full progress dict for this, so this is a fallback only
+    
+    def _get_deduplicated_page_status(self, progress_file: str) -> Dict[int, str]:
+        """
+        Get the latest status for each page, handling duplicate entries.
+        
+        Returns:
+            Dict mapping page_num -> latest_status
+        """
+        page_status = {}
+        csv_path = self._get_csv_path(progress_file)
+        
+        if os.path.exists(csv_path):
+            try:
+                with open(csv_path, 'r', newline='', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        page_num = int(row['page_num'])
+                        # Keep latest status (overwrites duplicates)
+                        page_status[page_num] = row['status']
+            except Exception as e:
+                print(f"Warning: Error reading progress file {csv_path}: {e}")
+        
+        return page_status
+    
+    def get_completion_status_fast(self, progress_file: str, total_pages: int) -> Dict[str, any]:
+        """
+        Fast method to get completion status without loading full progress objects.
+        
+        Args:
+            progress_file: Path to the progress CSV file
+            total_pages: Total number of pages to process
+            
+        Returns:
+            Dict with completion statistics: {
+                'completed_pages': set of completed page numbers,
+                'total_pages': total pages to process,
+                'completed_count': number of completed pages,
+                'remaining_count': number of remaining pages,
+                'completion_percentage': completion percentage,
+                'last_completed_page': highest completed page number,
+                'has_progress': whether any progress exists
+            }
+        """
+        completed_pages = set()
+        csv_path = self._get_csv_path(progress_file)
+        has_progress = False
+        
+        if os.path.exists(csv_path):
+            try:
+                with open(csv_path, 'r', newline='', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    # Track latest status for each page to handle duplicates
+                    page_status = {}
+                    for row in reader:
+                        has_progress = True
+                        page_num = int(row['page_num'])
+                        page_status[page_num] = row['status']
+                    
+                    # Count pages that are fully processed (any final status)
+                    for page_num, status in page_status.items():
+                        if status in ['completed', 'illegible', 'semantically_invalid']:
+                            completed_pages.add(page_num)
+            except Exception as e:
+                print(f"Warning: Error reading progress file {csv_path}: {e}")
+        
+        completed_count = len(completed_pages)
+        remaining_count = total_pages - completed_count
+        completion_percentage = (completed_count / total_pages * 100) if total_pages > 0 else 0
+        last_completed_page = max(completed_pages) if completed_pages else 0
+        
+        return {
+            'completed_pages': completed_pages,
+            'total_pages': total_pages,
+            'completed_count': completed_count,
+            'remaining_count': remaining_count,
+            'completion_percentage': completion_percentage,
+            'last_completed_page': last_completed_page,
+            'has_progress': has_progress
+        }
+    
+    def get_completed_pages_only(self, progress_file: str) -> Set[int]:
+        """
+        Ultra-fast method to get only the set of completed page numbers.
+        
+        Args:
+            progress_file: Path to the progress CSV file
+            
+        Returns:
+            Set of completed page numbers
+        """
+        completed_pages = set()
+        csv_path = self._get_csv_path(progress_file)
+        
+        if os.path.exists(csv_path):
+            try:
+                with open(csv_path, 'r', newline='', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        if row['status'] == 'completed':
+                            completed_pages.add(int(row['page_num']))
+            except Exception as e:
+                print(f"Warning: Error reading progress file {csv_path}: {e}")
+        
+        return completed_pages
+    
+    def get_image_completion_status_fast(self, progress_file: str, total_files: int) -> Dict[str, any]:
+        """
+        Fast method to get image completion status without loading full progress objects.
+        
+        Args:
+            progress_file: Path to the progress CSV file
+            total_files: Total number of files to process
+            
+        Returns:
+            Dict with completion statistics
+        """
+        completed_files = set()
+        csv_path = self._get_csv_path(progress_file)
+        has_progress = False
+        
+        if os.path.exists(csv_path):
+            try:
+                with open(csv_path, 'r', newline='', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    # Track latest status for each file to handle duplicates
+                    file_status = {}
+                    for row in reader:
+                        has_progress = True
+                        file_path = row['file_path']
+                        file_status[file_path] = row['status']
+                    
+                    # Count files that are fully processed (any final status)
+                    for file_path, status in file_status.items():
+                        if status in ['completed', 'illegible', 'semantically_invalid']:
+                            completed_files.add(file_path)
+            except Exception as e:
+                print(f"Warning: Error reading progress file {csv_path}: {e}")
+        
+        completed_count = len(completed_files)
+        remaining_count = total_files - completed_count
+        completion_percentage = (completed_count / total_files * 100) if total_files > 0 else 0
+        
+        return {
+            'completed_files': completed_files,
+            'total_files': total_files,
+            'completed_count': completed_count,
+            'remaining_count': remaining_count,
+            'completion_percentage': completion_percentage,
+            'has_progress': has_progress
+        }
 
     def append_image_progress(self, image_progress: ImageProgress, progress_file: str):
         """Append a single image progress entry to CSV file (faster for real-time updates)."""
@@ -237,3 +397,130 @@ class ProgressManager:
             # Fallback to full rewrite if append fails
             print(f"Warning: Append failed ({e}), falling back to full progress save")
             # We'll need the full progress dict for this, so this is a fallback only
+    
+    def get_completion_status_fast(self, progress_file: str, total_pages: int) -> Dict[str, any]:
+        """
+        Fast method to get completion status without loading full progress objects.
+        
+        Args:
+            progress_file: Path to the progress CSV file
+            total_pages: Total number of pages to process
+            
+        Returns:
+            Dict with completion statistics: {
+                'completed_pages': set of completed page numbers,
+                'total_pages': total pages to process,
+                'completed_count': number of completed pages,
+                'remaining_count': number of remaining pages,
+                'completion_percentage': completion percentage,
+                'last_completed_page': highest completed page number,
+                'has_progress': whether any progress exists
+            }
+        """
+        completed_pages = set()
+        csv_path = self._get_csv_path(progress_file)
+        has_progress = False
+        
+        if os.path.exists(csv_path):
+            try:
+                with open(csv_path, 'r', newline='', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    # Track latest status for each page to handle duplicates
+                    page_status = {}
+                    for row in reader:
+                        has_progress = True
+                        page_num = int(row['page_num'])
+                        page_status[page_num] = row['status']
+                    
+                    # Count pages that are fully processed (any final status)
+                    for page_num, status in page_status.items():
+                        if status in ['completed', 'illegible', 'semantically_invalid']:
+                            completed_pages.add(page_num)
+            except Exception as e:
+                print(f"Warning: Error reading progress file {csv_path}: {e}")
+        
+        completed_count = len(completed_pages)
+        remaining_count = total_pages - completed_count
+        completion_percentage = (completed_count / total_pages * 100) if total_pages > 0 else 0
+        last_completed_page = max(completed_pages) if completed_pages else 0
+        
+        return {
+            'completed_pages': completed_pages,
+            'total_pages': total_pages,
+            'completed_count': completed_count,
+            'remaining_count': remaining_count,
+            'completion_percentage': completion_percentage,
+            'last_completed_page': last_completed_page,
+            'has_progress': has_progress
+        }
+    
+    def get_completed_pages_only(self, progress_file: str) -> Set[int]:
+        """
+        Ultra-fast method to get only the set of completed page numbers.
+        
+        Args:
+            progress_file: Path to the progress CSV file
+            
+        Returns:
+            Set of completed page numbers
+        """
+        completed_pages = set()
+        csv_path = self._get_csv_path(progress_file)
+        
+        if os.path.exists(csv_path):
+            try:
+                with open(csv_path, 'r', newline='', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        if row['status'] == 'completed':
+                            completed_pages.add(int(row['page_num']))
+            except Exception as e:
+                print(f"Warning: Error reading progress file {csv_path}: {e}")
+        
+        return completed_pages
+    
+    def get_image_completion_status_fast(self, progress_file: str, total_files: int) -> Dict[str, any]:
+        """
+        Fast method to get image completion status without loading full progress objects.
+        
+        Args:
+            progress_file: Path to the progress CSV file
+            total_files: Total number of files to process
+            
+        Returns:
+            Dict with completion statistics
+        """
+        completed_files = set()
+        csv_path = self._get_csv_path(progress_file)
+        has_progress = False
+        
+        if os.path.exists(csv_path):
+            try:
+                with open(csv_path, 'r', newline='', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    # Track latest status for each file to handle duplicates
+                    file_status = {}
+                    for row in reader:
+                        has_progress = True
+                        file_path = row['file_path']
+                        file_status[file_path] = row['status']
+                    
+                    # Count files that are fully processed (any final status)
+                    for file_path, status in file_status.items():
+                        if status in ['completed', 'illegible', 'semantically_invalid']:
+                            completed_files.add(file_path)
+            except Exception as e:
+                print(f"Warning: Error reading progress file {csv_path}: {e}")
+        
+        completed_count = len(completed_files)
+        remaining_count = total_files - completed_count
+        completion_percentage = (completed_count / total_files * 100) if total_files > 0 else 0
+        
+        return {
+            'completed_files': completed_files,
+            'total_files': total_files,
+            'completed_count': completed_count,
+            'remaining_count': remaining_count,
+            'completion_percentage': completion_percentage,
+            'has_progress': has_progress
+        }
